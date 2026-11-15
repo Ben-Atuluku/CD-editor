@@ -85,7 +85,7 @@ function OutlineCell({ entry, accent }: { entry: OutlineEntry | null; accent: st
     <div className="diff-cell">
       <span
         className="diff-badge"
-        style={{ color: accent, borderColor: `${accent}55`, background: `${accent}14` }}
+        style={{ color: accent, borderColor: "var(--line)", background: "transparent" }}
       >
         {entry.fourcc}
       </span>
@@ -138,7 +138,7 @@ export function CompareView({ current }: Props) {
         <Slot
           label="A"
           doc={a}
-          accent="#ffcf4d"
+          accent="var(--accent)"
           onFile={(file) => void load(file, setA)}
           onUseCurrent={() => current && setA(current)}
           hasCurrent={Boolean(current)}
@@ -146,7 +146,7 @@ export function CompareView({ current }: Props) {
         <Slot
           label="B"
           doc={b}
-          accent="#63a6ff"
+          accent="var(--muted)"
           onFile={(file) => void load(file, setB)}
           onUseCurrent={() => current && setB(current)}
           hasCurrent={Boolean(current)}
@@ -204,8 +204,8 @@ export function CompareView({ current }: Props) {
             <div className="outline-scroll">
               {outline.map((row, index) => (
                 <div className={`outline-row ${row.differs ? "differs" : ""}`} key={index}>
-                  <OutlineCell entry={row.a} accent="#ffcf4d" />
-                  <OutlineCell entry={row.b} accent="#63a6ff" />
+                  <OutlineCell entry={row.a} accent="var(--accent)" />
+                  <OutlineCell entry={row.b} accent="var(--muted)" />
                 </div>
               ))}
             </div>

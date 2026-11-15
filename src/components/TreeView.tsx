@@ -1,12 +1,59 @@
 import { useState } from "react";
-import { formatOffset, type CdDocument, type ContainerNode } from "../lib/cd";
-import { CATEGORY_INFO, TYPE_HINTS, classifyReference, type CategoryId } from "../lib/categories";
+import { formatOffset, type CdDocument, type ContainerNode, type StringSlot } from "../lib/cd";
+import {
+  CATEGORY_INFO,
+  TYPE_HINTS,
+  classifyReference,
+  shortReferenceName,
+  type CategoryId,
+} from "../lib/categories";
 import type { Selection } from "../lib/selection";
 
 interface Props {
   doc: CdDocument;
   selection: Selection | null;
   onSelect: (selection: Selection) => void;
+  onEditString: (slot: StringSlot, text: string) => void;
+  onAddMobj: (olstId: string, name: string) => void;
+}
+
+function InlineEditor({
+  value,
+  maxLength,
+  placeholder,
+  onCommit,
+  onCancel,
+}: {
+  value: string;
+  maxLength?: number;
+  placeholder?: string;
+  onCommit: (next: string) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  return (
+    <input
+      className="tree-input"
+      autoFocus
+      spellCheck={false}
+      placeholder={placeholder}
+      value={draft}
+      maxLength={maxLength}
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onCommit(draft);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
+      onBlur={() => onCommit(draft)}
+    />
+  );
 }
 
 function dominantCategory(node: ContainerNode): CategoryId | null {
@@ -36,7 +83,7 @@ function dominantCategory(node: ContainerNode): CategoryId | null {
 }
 
 function blockTitle(node: ContainerNode): string {
-  if (node.fourcc !== "OLST") return node.label ?? "(unnamed block)";
+  if (node.fourcc !== "OLST") return node.label ? shortReferenceName(node.label) : "(empty block)";
   if (node.type === 0) return "Character";
   const hinted = node.type != null ? TYPE_HINTS[node.type] : undefined;
   if (hinted) return CATEGORY_INFO[hinted].label;
@@ -51,15 +98,15 @@ function blockMeta(node: ContainerNode): string {
       node.children.length === 1 ? "" : "s"
     }`;
   }
-  return node.strings.length > 1
-    ? `${node.strings.length} strings`
-    : node.label
-      ? "reference"
-      : "empty";
+  if (node.strings.length > 1) return `${node.strings.length} strings`;
+  return node.strings.length === 0 ? "empty" : "";
 }
 
-export function TreeView({ doc, selection, onSelect }: Props) {
+export function TreeView({ doc, selection, onSelect, onEditString, onAddMobj }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [addingId, setAddingId] = useState<string | null>(null);
+
   // MOBJ leaves collapse by default; OLST groups open.
   const isCollapsed = (node: ContainerNode) =>
     collapsed.has(node.id) || (node.fourcc !== "OLST" && !collapsed.has(`open:${node.id}`));
@@ -83,14 +130,6 @@ export function TreeView({ doc, selection, onSelect }: Props) {
   };
 
   const selectNode = (node: ContainerNode) => {
-    if (node.fourcc !== "OLST" && node.strings[0]) {
-      onSelect({
-        kind: "string",
-        offset: node.strings[0].offset,
-        length: node.strings[0].byteLength,
-      });
-      return;
-    }
     if (node.strings[0]) {
       onSelect({
         kind: "string",
@@ -102,13 +141,33 @@ export function TreeView({ doc, selection, onSelect }: Props) {
     onSelect({ kind: "container", offset: node.offset, length: node.size });
   };
 
+  const startEdit = (slot: StringSlot) => {
+    if (slot.readOnly) return;
+    onSelect({ kind: "string", offset: slot.offset, length: slot.byteLength });
+    setEditingId(slot.id);
+  };
+
+  const commitEdit = (slot: StringSlot, next: string) => {
+    if (editingId !== slot.id) return;
+    setEditingId(null);
+    if (next !== slot.text) onEditString(slot, next);
+  };
+
+  const commitAdd = (node: ContainerNode, name: string) => {
+    if (addingId !== node.id) return;
+    setAddingId(null);
+    const clean = name.trim();
+    if (clean.length > 0) onAddMobj(node.id, clean);
+  };
+
   const renderNode = (node: ContainerNode) => {
     const open = !isCollapsed(node);
     const active =
       (selection?.kind === "container" && selection.offset === node.offset) ||
-      (selection?.kind === "string" &&
-        node.strings.some((slot) => slot.offset === selection.offset));
+      (selection?.kind === "string" && node.strings.some((slot) => slot.offset === selection.offset));
     const expandable = node.children.length > 0 || node.strings.length > 1;
+    const primary = node.strings[0];
+    const editingPrimary = Boolean(primary && editingId === primary.id);
 
     return (
       <div key={node.id}>
@@ -128,13 +187,35 @@ export function TreeView({ doc, selection, onSelect }: Props) {
           >
             {!expandable ? "·" : open ? "▾" : "▸"}
           </button>
-          <span className={`badge ${node.fourcc === "OLST" ? "olst" : "mobj"}`}>
-            {node.fourcc}
-          </span>
-          <span className="tree-title" title={blockTitle(node)}>
-            {blockTitle(node)}
-          </span>
-          <span className="tree-meta">{blockMeta(node)}</span>
+          <span className={`badge ${node.fourcc === "OLST" ? "olst" : "mobj"}`}>{node.fourcc}</span>
+
+          {primary && editingPrimary ? (
+            <InlineEditor
+              value={primary.text}
+              maxLength={primary.capacity}
+              onCommit={(next) => commitEdit(primary, next)}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            <span className="tree-title" title={node.label ?? blockTitle(node)}>
+              {blockTitle(node)}
+            </span>
+          )}
+
+          {primary && !primary.readOnly && !editingPrimary && (
+            <button
+              className="row-action"
+              title="Edit this reference in place"
+              onClick={(event) => {
+                event.stopPropagation();
+                startEdit(primary);
+              }}
+            >
+              edit
+            </button>
+          )}
+
+          {blockMeta(node) && <span className="tree-meta">{blockMeta(node)}</span>}
           <span className="tree-size">{node.size} B</span>
         </div>
 
@@ -142,22 +223,75 @@ export function TreeView({ doc, selection, onSelect }: Props) {
           <div>{node.children.map((child) => renderNode(child))}</div>
         )}
 
+        {open && node.fourcc === "OLST" && (
+          <div className="tree-add-row" style={{ paddingLeft: 34 + node.depth * 14 }}>
+            {addingId === node.id ? (
+              <>
+                <InlineEditor
+                  value=""
+                  placeholder="New MOBJ name"
+                  onCommit={(next) => commitAdd(node, next)}
+                  onCancel={() => setAddingId(null)}
+                />
+                <button
+                  className="row-action strong"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => commitAdd(node, "")}
+                >
+                  cancel
+                </button>
+              </>
+            ) : (
+              <button
+                className="tree-add"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setAddingId(node.id);
+                }}
+              >
+                + add MOBJ
+              </button>
+            )}
+          </div>
+        )}
+
         {open && node.strings.length > (node.fourcc === "OLST" ? 0 : 1) && (
           <div className="tree-refs" style={{ paddingLeft: 34 + node.depth * 14 }}>
-            {(node.fourcc === "OLST" ? node.strings : node.strings.slice(1)).map((slot) => (
-              <button
-                className={`tree-ref ${
-                  selection?.kind === "string" && selection.offset === slot.offset ? "active" : ""
-                }`}
-                key={slot.id}
-                title={`${formatOffset(slot.offset)} — ${slot.capacity} characters max`}
-                onClick={() =>
-                  onSelect({ kind: "string", offset: slot.offset, length: slot.byteLength })
-                }
-              >
-                {slot.text}
-              </button>
-            ))}
+            {(node.fourcc === "OLST" ? node.strings : node.strings.slice(1)).map((slot) =>
+              editingId === slot.id ? (
+                <div className="tree-ref-line" key={slot.id}>
+                  <InlineEditor
+                    value={slot.text}
+                    maxLength={slot.capacity}
+                    onCommit={(next) => commitEdit(slot, next)}
+                    onCancel={() => setEditingId(null)}
+                  />
+                </div>
+              ) : (
+                <div className="tree-ref-line" key={slot.id}>
+                  <button
+                    className={`tree-ref ${
+                      selection?.kind === "string" && selection.offset === slot.offset ? "active" : ""
+                    }`}
+                    title={`${formatOffset(slot.offset)} — ${slot.capacity} characters max`}
+                    onClick={() =>
+                      onSelect({ kind: "string", offset: slot.offset, length: slot.byteLength })
+                    }
+                  >
+                    {slot.text}
+                  </button>
+                  {!slot.readOnly && (
+                    <button
+                      className="row-action"
+                      title="Edit in place"
+                      onClick={() => startEdit(slot)}
+                    >
+                      edit
+                    </button>
+                  )}
+                </div>
+              ),
+            )}
           </div>
         )}
       </div>
@@ -180,9 +314,7 @@ export function TreeView({ doc, selection, onSelect }: Props) {
           <span className="tree-meta">{doc.stringPool.count} asset names</span>
           <button
             className="link"
-            onClick={() =>
-              onSelect({ kind: "byte", offset: doc.stringPool?.start ?? 0, length: 1 })
-            }
+            onClick={() => onSelect({ kind: "byte", offset: doc.stringPool?.start ?? 0, length: 1 })}
           >
             inspect
           </button>

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  addMobj,
   encodeReplacement,
   formatOffset,
   parseCd,
   type CdDocument,
   type StringSlot,
 } from "./lib/cd";
+import { ACCENTS, SettingsPanel, type Theme } from "./components/SettingsPanel";
 import { buildSampleCd } from "./lib/sample";
 import type { Selection } from "./lib/selection";
 import { HexView } from "./components/HexView";
@@ -22,7 +24,8 @@ interface Hunk {
 }
 
 interface Edit {
-  hunks: Hunk[];
+  before: Uint8Array;
+  after: Uint8Array;
   label: string;
 }
 
@@ -37,10 +40,14 @@ export default function App() {
   const [redoStack, setRedoStack] = useState<Edit[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [tab, setTab] = useState<"categories" | "blocks" | "references">("blocks");
+  const [tab, setTab] = useState<"categories" | "blocks" | "references" | "settings">("blocks");
   const [mode, setMode] = useState<"editor" | "compare">("editor");
   const [filter, setFilter] = useState("");
   const [warningsOpen, setWarningsOpen] = useState(true);
+  const [theme, setTheme] = useState<Theme>(() =>
+    localStorage.getItem("cd:theme") === "light" ? "light" : "dark",
+  );
+  const [accentId, setAccentId] = useState<string>(() => localStorage.getItem("cd:accent") ?? "mono");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback((name: string, data: Uint8Array) => {
@@ -115,42 +122,49 @@ export default function App() {
     }
   }, [bytes, fileName]);
 
-  const applyHunks = useCallback(
-    (hunks: Hunk[], label: string) => {
+  const applyEdit = useCallback(
+    (next: Uint8Array, label: string) => {
       if (!bytes) return;
-      const next = Uint8Array.from(bytes);
-      for (const hunk of hunks) next.set(hunk.after, hunk.offset);
+      const before = Uint8Array.from(bytes);
       setBytes(next);
       setDoc(parseCd(next, fileName));
-      setUndoStack((stack) => [...stack, { hunks, label }]);
+      setUndoStack((stack) => [...stack, { before, after: Uint8Array.from(next), label }]);
       setRedoStack([]);
     },
     [bytes, fileName],
   );
 
+  const applyHunks = useCallback(
+    (hunks: Hunk[], label: string) => {
+      if (!bytes) return;
+      const next = Uint8Array.from(bytes);
+      for (const hunk of hunks) next.set(hunk.after, hunk.offset);
+      applyEdit(next, label);
+    },
+    [bytes, applyEdit],
+  );
+
   const undo = useCallback(() => {
-    if (!bytes || undoStack.length === 0) return;
+    if (undoStack.length === 0) return;
     const edit = undoStack[undoStack.length - 1];
-    const next = Uint8Array.from(bytes);
-    for (const hunk of edit.hunks) next.set(hunk.before, hunk.offset);
+    const next = Uint8Array.from(edit.before);
     setBytes(next);
     setDoc(parseCd(next, fileName));
     setUndoStack((stack) => stack.slice(0, -1));
     setRedoStack((stack) => [...stack, edit]);
     setNotice(`Undid: ${edit.label}`);
-  }, [bytes, undoStack, fileName]);
+  }, [undoStack, fileName]);
 
   const redo = useCallback(() => {
-    if (!bytes || redoStack.length === 0) return;
+    if (redoStack.length === 0) return;
     const edit = redoStack[redoStack.length - 1];
-    const next = Uint8Array.from(bytes);
-    for (const hunk of edit.hunks) next.set(hunk.after, hunk.offset);
+    const next = Uint8Array.from(edit.after);
     setBytes(next);
     setDoc(parseCd(next, fileName));
     setRedoStack((stack) => stack.slice(0, -1));
     setUndoStack((stack) => [...stack, edit]);
     setNotice(`Redid: ${edit.label}`);
-  }, [bytes, redoStack, fileName]);
+  }, [redoStack, fileName]);
 
   const exportFile = useCallback(() => {
     if (!bytes) return;
@@ -200,6 +214,29 @@ export default function App() {
       setNotice(`Repointed reference at ${formatOffset(slot.offset)}.`);
     },
     [bytes, applyHunks],
+  );
+
+  const addMobjToGroup = useCallback(
+    (olstId: string, name: string) => {
+      if (!bytes || !doc) return;
+      const result = addMobj(doc, olstId, name);
+      if (!result.ok || !result.bytes) {
+        setNotice(result.error ?? "Could not add that MOBJ.");
+        return;
+      }
+      const next = result.bytes;
+      const parsed = parseCd(next, fileName);
+      applyEdit(next, `added MOBJ \"${name}\"`);
+      const added = parsed.containers.find((node) => node.offset === result.offset);
+      if (added) {
+        setSelection({ kind: "container", offset: added.offset, length: added.size });
+        setCursor(added.offset);
+      }
+      const warn =
+        doc.variant === "DX11" ? " DX11 header tables are not rebuilt — verify in game." : "";
+      setNotice(`Added \"${name}\" (${result.note}).${warn}`);
+    },
+    [bytes, doc, fileName, applyEdit],
   );
 
   const editByte = useCallback(
@@ -276,6 +313,32 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("cd:theme", theme);
+    } catch {
+      // Private-mode storage failures are harmless.
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    const accent = ACCENTS.find((entry) => entry.id === accentId) ?? ACCENTS[0];
+    const root = document.documentElement;
+    if (accent.value) {
+      root.style.setProperty("--accent", accent.value);
+      root.style.setProperty("--accent-ink", accent.ink);
+    } else {
+      root.style.removeProperty("--accent");
+      root.style.removeProperty("--accent-ink");
+    }
+    try {
+      localStorage.setItem("cd:accent", accent.id);
+    } catch {
+      // Private-mode storage failures are harmless.
+    }
+  }, [accentId]);
+
   const fileSize = bytes?.length ?? 0;
 
   return (
@@ -330,6 +393,14 @@ export default function App() {
             Compare
           </button>
         </div>
+
+        <button
+          className="theme-toggle"
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        >
+          {theme}
+        </button>
 
         {mode === "editor" && doc && (
           <div className="file-chip">
@@ -468,11 +539,30 @@ export default function App() {
               >
                 All refs <span className="tab-count">{doc.strings.length}</span>
               </button>
+              <button
+                className={tab === "settings" ? "tab active" : "tab"}
+                onClick={() => setTab("settings")}
+              >
+                Settings
+              </button>
             </div>
-            {tab === "categories" ? (
+            {tab === "settings" ? (
+              <SettingsPanel
+                theme={theme}
+                onTheme={setTheme}
+                accentId={accentId}
+                onAccent={setAccentId}
+              />
+            ) : tab === "categories" ? (
               <CategoryTree doc={doc} selection={selection} onSelect={select} />
             ) : tab === "blocks" ? (
-              <TreeView doc={doc} selection={selection} onSelect={select} />
+              <TreeView
+                doc={doc}
+                selection={selection}
+                onSelect={select}
+                onEditString={editString}
+                onAddMobj={addMobjToGroup}
+              />
             ) : (
               <References
                 doc={doc}

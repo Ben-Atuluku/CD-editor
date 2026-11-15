@@ -171,12 +171,24 @@ export interface CategoryGroup {
   count: number;
 }
 
+/**
+ * Asset paths are stored in full; the tree only needs the part that differs.
+ * "Chars\Super_Characters\Texture\Arm" reads as "Arm", and a trailing file
+ * extension is dropped so "BATMAN.GHG" reads as "BATMAN".
+ */
+export function shortReferenceName(text: string): string {
+  const cleaned = text.trim();
+  const segments = cleaned.split(/[\\/]/).filter(Boolean);
+  const last = segments.length > 0 ? segments[segments.length - 1] : cleaned;
+  return last.replace(/\.(tex|dds|tsh|png|tga|bmp|ghg|gsc|cmo|nup|mesh|cbx|wav|ogg|an[0-9]|as)$/i, "");
+}
+
 function blockName(node: ContainerNode | null): string {
   if (!node) return "Asset name pool";
   if (node.fourcc === "OLST") return `OLST · type ${node.type ?? "?"}`;
   if (node.fourcc === "MOBJ") {
     if (node.ids) return `MOBJ · id ${node.ids[0]}/${node.ids[1]}`;
-    return node.label ? `MOBJ · ${node.label}` : "MOBJ";
+    return node.label ? shortReferenceName(node.label) : "MOBJ";
   }
   return node.fourcc;
 }

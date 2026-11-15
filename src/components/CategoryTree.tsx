@@ -33,14 +33,12 @@ function SlotRow({
 
 function Block({
   block,
-  categoryColor,
   selection,
   onSelect,
   collapsed,
   onToggle,
 }: {
   block: CategoryBlock;
-  categoryColor: string;
   selection: Selection | null;
   onSelect: (selection: Selection) => void;
   collapsed: boolean;
@@ -52,10 +50,6 @@ function Block({
         <span className={`cat-caret ${collapsed ? "closed" : ""}`}>▾</span>
         <span className="cat-block-name">{block.name}</span>
         <span className="cat-block-count">{block.slots.length}</span>
-        <span
-          className="cat-block-bar"
-          style={{ background: categoryColor, opacity: 0.55 }}
-        />
       </button>
       {!collapsed && (
         <div className="cat-slots">
@@ -91,7 +85,7 @@ function Group({
     <section className="cat-group">
       <button className="cat-head" onClick={() => toggleGroup(group.id)}>
         <span className={`cat-caret ${open ? "" : "closed"}`}>▾</span>
-        <span className="cat-dot" style={{ background: group.info.color }} />
+        <span className="cat-dot" />
         <span className="cat-label">{group.info.label}</span>
         <span className="cat-hint">{group.info.hint}</span>
         <span className="cat-count">{group.count}</span>
@@ -105,7 +99,6 @@ function Group({
               <Block
                 key={key}
                 block={block}
-                categoryColor={group.info.color}
                 selection={selection}
                 onSelect={onSelect}
                 collapsed={collapsedBlocks.has(key)}

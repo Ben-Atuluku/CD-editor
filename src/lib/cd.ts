@@ -636,3 +636,155 @@ export function encodeReplacement(
 export function formatOffset(offset: number): string {
   return `0x${offset.toString(16).toUpperCase().padStart(6, "0")}`;
 }
+
+/* ------------------------------------------------------------------ *
+ * Adding MOBJ entries
+ *
+ * Insertion is a splice, not an overwrite: the new block goes after the
+ * last child of the chosen OLST, every ancestor grows by the same number
+ * of bytes, and the OLST's declared count goes up by one. Nothing is
+ * renumbered, so existing references keep working.
+ *
+ * The new block is modelled on a sibling leaf so generation-specific
+ * trailing fields are preserved instead of guessed.
+ * ------------------------------------------------------------------ */
+
+const MOBJ_TAG = Uint8Array.of(0x4d, 0x4f, 0x42, 0x4a, 0x00);
+
+function writeU32(target: Uint8Array, offset: number, value: number): void {
+  target[offset] = value & 0xff;
+  target[offset + 1] = (value >> 8) & 0xff;
+  target[offset + 2] = (value >> 16) & 0xff;
+  target[offset + 3] = (value >>> 24) & 0xff;
+}
+
+function u32Bytes(value: number): Uint8Array {
+  return Uint8Array.of(value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >>> 24) & 0xff);
+}
+
+function asciiBytes(text: string): Uint8Array | null {
+  const out = new Uint8Array(text.length);
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code < 0x20 || code > 0xff) return null;
+    out[index] = code;
+  }
+  return out;
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+/** Smallest legal NXG leaf: header, length-prefixed name, one zero byte. */
+function freshNxgMobj(text: Uint8Array): Uint8Array {
+  const out = new Uint8Array(16 + 4 + text.length + 1 + 1);
+  writeU32(out, 0, out.length);
+  writeU32(out, 4, 5);
+  out.set(MOBJ_TAG, 8);
+  writeU32(out, 16, text.length + 1);
+  out.set(text, 20);
+  return out;
+}
+
+function cloneNxgMobj(
+  bytes: Uint8Array,
+  template: ContainerNode,
+  text: Uint8Array,
+): Uint8Array | null {
+  const slot = template.strings[0];
+  if (!slot || slot.offset - template.offset < 20) return null;
+  const head = bytes.subarray(template.offset, slot.offset - 4);
+  const tail = bytes.subarray(slot.offset + slot.byteLength, template.end);
+  const out = concatBytes([head, u32Bytes(text.length + 1), text, Uint8Array.of(0), tail]);
+  writeU32(out, 0, out.length);
+  return out;
+}
+
+function cloneDx11Mobj(
+  bytes: Uint8Array,
+  template: ContainerNode,
+  text: Uint8Array,
+): Uint8Array | null {
+  const slot = template.strings[0];
+  if (!slot || slot.offset - template.offset < 17) return null;
+  const head = bytes.subarray(template.offset, slot.offset);
+  const tail = bytes.subarray(slot.offset + slot.byteLength, template.end);
+  const out = concatBytes([head, text, Uint8Array.of(0), tail]);
+  writeU32(out, 0, out.length);
+  return out;
+}
+
+export interface AddMobjResult {
+  ok: boolean;
+  bytes?: Uint8Array;
+  offset?: number;
+  error?: string;
+  note?: string;
+}
+
+export function addMobj(doc: CdDocument, olstId: string, name: string): AddMobjResult {
+  const target = doc.containers.find((node) => node.id === olstId);
+  if (!target || target.fourcc !== "OLST") {
+    return { ok: false, error: "Pick an OLST group to add to." };
+  }
+
+  const clean = name.trim();
+  if (clean.length === 0) return { ok: false, error: "Give the new MOBJ a name." };
+  if (clean.length > 120) return { ok: false, error: "Keep the name under 120 characters." };
+
+  const text = asciiBytes(clean);
+  if (!text) return { ok: false, error: "Names must use Latin-1 characters only." };
+
+  const template = [...target.children]
+    .reverse()
+    .find((child) => child.fourcc === "MOBJ" && child.children.length === 0);
+
+  let block: Uint8Array | null = null;
+  const nxg = doc.variant === "NXG";
+  if (template) block = nxg ? cloneNxgMobj(doc.bytes, template, text) : cloneDx11Mobj(doc.bytes, template, text);
+  else if (nxg) block = freshNxgMobj(text);
+
+  if (!block) {
+    return {
+      ok: false,
+      error:
+        doc.variant === "DX11"
+          ? "This group has no leaf entry to model a new MOBJ on. Add to a group that already has one."
+          : "Could not build a new MOBJ for this group.",
+    };
+  }
+
+  const ancestors: ContainerNode[] = [];
+  let current: ContainerNode | undefined = target;
+  while (current) {
+    ancestors.push(current);
+    const parentId: string | null = current.parentId;
+    current = parentId ? doc.containers.find((node) => node.id === parentId) : undefined;
+  }
+
+  const insertAt = target.end;
+  const out = new Uint8Array(doc.bytes.length + block.length);
+  out.set(doc.bytes.subarray(0, insertAt), 0);
+  out.set(block, insertAt);
+  out.set(doc.bytes.subarray(insertAt), insertAt + block.length);
+
+  for (const node of ancestors) writeU32(out, node.offset, node.size + block.length);
+  if (target.count !== null) writeU32(out, target.offset + 15, target.count + 1);
+
+  return {
+    ok: true,
+    bytes: out,
+    offset: insertAt,
+    note: template
+      ? `copied the layout of ${template.label ?? "a sibling entry"}`
+      : "used the minimal NXG leaf layout",
+  };
+}
