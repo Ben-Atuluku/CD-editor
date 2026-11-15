@@ -6,7 +6,13 @@ export type IconName =
   | "upload"
   | "download"
   | "sun"
-  | "moon";
+  | "moon"
+  | "tree"
+  | "grid"
+  | "list"
+  | "cog"
+  | "collapse"
+  | "expand";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   open: (
@@ -54,6 +60,30 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   moon: <path d="M20.5 14.6A8.6 8.6 0 0 1 9.4 3.5a8.6 8.6 0 1 0 11.1 11.1z" />,
+  tree: (
+    <>
+      <path d="M21 12h-8M21 6h-8M21 18h-8" />
+      <path d="M3 6v4c0 1.1.9 2 2 2h3" />
+      <path d="M3 10v6c0 1.1.9 2 2 2h3" />
+    </>
+  ),
+  grid: (
+    <>
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+    </>
+  ),
+  list: <path d="M8 6h13M8 12h13M8 18h13M3 6h.4M3 12h.4M3 18h.4" />,
+  cog: (
+    <>
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M19.1 14.3a1.5 1.5 0 0 0 .3 1.7l.1.1a1.9 1.9 0 0 1-2.7 2.7l-.1-.1a1.5 1.5 0 0 0-1.7-.3 1.5 1.5 0 0 0-.9 1.4V20a1.9 1.9 0 0 1-3.8 0v-.2a1.5 1.5 0 0 0-.9-1.4 1.5 1.5 0 0 0-1.7.3l-.1.1a1.9 1.9 0 0 1-2.7-2.7l.1-.1a1.5 1.5 0 0 0 .3-1.7 1.5 1.5 0 0 0-1.4-.9H4a1.9 1.9 0 0 1 0-3.8h.2a1.5 1.5 0 0 0 1.4-.9 1.5 1.5 0 0 0-.3-1.7l-.1-.1a1.9 1.9 0 0 1 2.7-2.7l.1.1a1.5 1.5 0 0 0 1.7.3h.1a1.5 1.5 0 0 0 .9-1.4V4a1.9 1.9 0 0 1 3.8 0v.2a1.5 1.5 0 0 0 .9 1.4 1.5 1.5 0 0 0 1.7-.3l.1-.1a1.9 1.9 0 0 1 2.7 2.7l-.1.1a1.5 1.5 0 0 0-.3 1.7v.1a1.5 1.5 0 0 0 1.4.9H20a1.9 1.9 0 0 1 0 3.8h-.2a1.5 1.5 0 0 0-1.4.9z" />
+    </>
+  ),
+  collapse: <path d="m6 9 6 6 6-6" />,
+  expand: <path d="m6 15 6-6 6 6" />,
 };
 
 export function Icon({ name, size = 15 }: { name: IconName; size?: number }) {

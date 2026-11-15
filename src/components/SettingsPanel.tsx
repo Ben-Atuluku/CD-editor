@@ -24,9 +24,18 @@ interface Props {
   onTheme: (theme: Theme) => void;
   accentId: string;
   onAccent: (id: string) => void;
+  accentEnabled: boolean;
+  onAccentEnabled: (enabled: boolean) => void;
 }
 
-export function SettingsPanel({ theme, onTheme, accentId, onAccent }: Props) {
+export function SettingsPanel({
+  theme,
+  onTheme,
+  accentId,
+  onAccent,
+  accentEnabled,
+  onAccentEnabled,
+}: Props) {
   return (
     <div className="settings">
       <section className="settings-group">
@@ -48,14 +57,27 @@ export function SettingsPanel({ theme, onTheme, accentId, onAccent }: Props) {
       </section>
 
       <section className="settings-group">
-        <h3>Accent</h3>
-        <div className="swatch-list">
+        <div className="settings-head">
+          <h3>Accent</h3>
+          <button
+            className={`switch ${accentEnabled ? "on" : ""}`}
+            role="switch"
+            aria-checked={accentEnabled}
+            aria-label="Use an accent colour"
+            title={accentEnabled ? "Turn the accent off" : "Turn the accent on"}
+            onClick={() => onAccentEnabled(!accentEnabled)}
+          >
+            <span className="switch-knob" />
+          </button>
+        </div>
+        <div className={`swatch-list ${accentEnabled ? "" : "off"}`}>
           {ACCENTS.map((accent) => (
             <button
               key={accent.id}
               className={`swatch-btn ${accentId === accent.id ? "active" : ""}`}
               onClick={() => onAccent(accent.id)}
-              title={accent.label}
+              disabled={!accentEnabled}
+              title={accentEnabled ? accent.label : "Accent is off"}
             >
               <span
                 className="swatch-dot"
@@ -65,6 +87,10 @@ export function SettingsPanel({ theme, onTheme, accentId, onAccent }: Props) {
             </button>
           ))}
         </div>
+        <p className="hint">
+          Off leaves focus, selection and links monochrome — the interface is black, white and grey
+          only.
+        </p>
       </section>
     </div>
   );

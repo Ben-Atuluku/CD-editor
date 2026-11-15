@@ -8,6 +8,8 @@ import {
   type CategoryId,
 } from "../lib/categories";
 import type { Selection } from "../lib/selection";
+import { describeMaterial } from "../lib/bodyParts";
+import { textureFields } from "../lib/texture";
 
 interface Props {
   doc: CdDocument;
@@ -167,6 +169,9 @@ export function TreeView({ doc, selection, onSelect, onEditString, onAddMobj }: 
       (selection?.kind === "string" && node.strings.some((slot) => slot.offset === selection.offset));
     const expandable = node.children.length > 0 || node.strings.length > 1;
     const primary = node.strings[0];
+    // Texture entries carry Flux's material number, which names the body part.
+    const texture = textureFields(node, doc.bytes);
+    const part = texture ? describeMaterial(texture.material) : null;
     const editingPrimary = Boolean(primary && editingId === primary.id);
 
     return (
@@ -216,8 +221,19 @@ export function TreeView({ doc, selection, onSelect, onEditString, onAddMobj }: 
             </button>
           )}
 
-          {blockMeta(node) && <span className="tree-meta">{blockMeta(node)}</span>}
-          <span className="tree-size">{node.size} B</span>
+          {part ? (
+            <span
+              className="tree-part"
+              title={`Flux material ${texture?.material} · texture slot ${texture?.slot}`}
+            >
+              {part}
+            </span>
+          ) : (
+            <>
+              {blockMeta(node) && <span className="tree-meta">{blockMeta(node)}</span>}
+              <span className="tree-size">{node.size} B</span>
+            </>
+          )}
         </div>
 
         {open && node.children.length > 0 && (

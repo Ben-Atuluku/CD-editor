@@ -5,8 +5,11 @@ import {
   formatOffset,
   parseCd,
   type CdDocument,
+  type ContainerNode,
   type StringSlot,
 } from "./lib/cd";
+import { textureFields } from "./lib/texture";
+import { describeMaterial } from "./lib/bodyParts";
 import { ACCENTS, SettingsPanel, type Theme } from "./components/SettingsPanel";
 import type { Selection } from "./lib/selection";
 import { Icon } from "./components/Icon";
@@ -51,6 +54,10 @@ export default function App() {
     const stored = localStorage.getItem("cd:accent");
     return ACCENTS.some((entry) => entry.id === stored) ? (stored as string) : "blue";
   });
+  const [accentEnabled, setAccentEnabled] = useState<boolean>(
+    () => localStorage.getItem("cd:accent-on") !== "no",
+  );
+  const [hexOpen, setHexOpen] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback((name: string, data: Uint8Array) => {
@@ -237,6 +244,45 @@ export default function App() {
     [bytes, doc, fileName, applyEdit],
   );
 
+  /** Writes the Flux "Material" or "Texture Slot" u32 of a texture MOBJ in place. */
+  const editTextureField = useCallback(
+    (node: ContainerNode, field: "material" | "slot", value: number) => {
+      if (!bytes || !doc) return;
+      if (!Number.isInteger(value) || value < 0 || value > 0xffff) return;
+      const fields = textureFields(node, bytes);
+      if (!fields) {
+        setNotice("That block does not look like a texture entry.");
+        return;
+      }
+      const offset = field === "material" ? fields.materialOffset : fields.slotOffset;
+      const current = field === "material" ? fields.material : fields.slot;
+      if (current === value) return;
+      applyHunks(
+        [
+          {
+            offset,
+            before: bytes.slice(offset, offset + 4),
+            after: Uint8Array.of(
+              value & 0xff,
+              (value >>> 8) & 0xff,
+              (value >>> 16) & 0xff,
+              (value >>> 24) & 0xff,
+            ),
+          },
+        ],
+        `${field} ${current} → ${value}`,
+      );
+      setSelection({ kind: "container", offset: node.offset, length: node.size });
+      setCursor(offset);
+      setNotice(
+        field === "material"
+          ? `Material set to ${value}${describeMaterial(value) ? ` (${describeMaterial(value)})` : ""}.`
+          : `Texture slot set to ${value}.`,
+      );
+    },
+    [bytes, doc, applyHunks],
+  );
+
   const editByte = useCallback(
     (offset: number, value: number) => {
       if (!bytes) return;
@@ -323,16 +369,24 @@ export default function App() {
   useEffect(() => {
     const accent = ACCENTS.find((entry) => entry.id === accentId) ?? ACCENTS[0];
     const root = document.documentElement;
-    // Each accent has a dark-interface and a light-interface shade so contrast
-    // holds on both backgrounds.
-    root.style.setProperty("--accent", theme === "dark" ? accent.dark : accent.light);
-    root.style.setProperty("--accent-ink", theme === "dark" ? accent.inkDark : accent.inkLight);
+    if (accentEnabled) {
+      // Each accent has a dark-interface and a light-interface shade so contrast
+      // holds on both backgrounds.
+      root.style.setProperty("--accent", theme === "dark" ? accent.dark : accent.light);
+      root.style.setProperty("--accent-ink", theme === "dark" ? accent.inkDark : accent.inkLight);
+    } else {
+      // A disabled accent falls back to the interface ink, so focus, selection
+      // and links read as black/white only.
+      root.style.setProperty("--accent", "var(--fg)");
+      root.style.setProperty("--accent-ink", "var(--bg)");
+    }
     try {
       localStorage.setItem("cd:accent", accent.id);
+      localStorage.setItem("cd:accent-on", accentEnabled ? "yes" : "no");
     } catch {
       // Private-mode storage failures are harmless.
     }
-  }, [accentId, theme]);
+  }, [accentId, theme, accentEnabled]);
 
   const fileSize = bytes?.length ?? 0;
 
@@ -506,32 +560,46 @@ export default function App() {
           </div>
         </main>
       ) : (
-        <main className="workspace">
+        <main className={`workspace ${hexOpen ? "" : "hex-collapsed"}`}>
           <aside className="panel">
-            <div className="tabs">
+            <div className="panel-tools">
+              <div className="tool-group">
+                <button
+                  className={tab === "blocks" ? "tool-btn active" : "tool-btn"}
+                  onClick={() => setTab("blocks")}
+                  title={`Tree — ${doc.containers.length} blocks`}
+                  aria-label="Tree"
+                  aria-pressed={tab === "blocks"}
+                >
+                  <Icon name="tree" />
+                </button>
+                <button
+                  className={tab === "categories" ? "tool-btn active" : "tool-btn"}
+                  onClick={() => setTab("categories")}
+                  title="Categories — references grouped by asset family"
+                  aria-label="Categories"
+                  aria-pressed={tab === "categories"}
+                >
+                  <Icon name="grid" />
+                </button>
+                <button
+                  className={tab === "references" ? "tool-btn active" : "tool-btn"}
+                  onClick={() => setTab("references")}
+                  title={`All refs — ${doc.strings.length} references`}
+                  aria-label="All refs"
+                  aria-pressed={tab === "references"}
+                >
+                  <Icon name="list" />
+                </button>
+              </div>
               <button
-                className={tab === "blocks" ? "tab active" : "tab"}
-                onClick={() => setTab("blocks")}
-              >
-                Tree <span className="tab-count">{doc.containers.length}</span>
-              </button>
-              <button
-                className={tab === "categories" ? "tab active" : "tab"}
-                onClick={() => setTab("categories")}
-              >
-                Categories
-              </button>
-              <button
-                className={tab === "references" ? "tab active" : "tab"}
-                onClick={() => setTab("references")}
-              >
-                All refs <span className="tab-count">{doc.strings.length}</span>
-              </button>
-              <button
-                className={tab === "settings" ? "tab active" : "tab"}
+                className={tab === "settings" ? "tool-btn corner active" : "tool-btn corner"}
                 onClick={() => setTab("settings")}
+                title="Settings"
+                aria-label="Settings"
+                aria-pressed={tab === "settings"}
               >
-                Settings
+                <Icon name="cog" />
               </button>
             </div>
             {tab === "settings" ? (
@@ -540,6 +608,8 @@ export default function App() {
                 onTheme={setTheme}
                 accentId={accentId}
                 onAccent={setAccentId}
+                accentEnabled={accentEnabled}
+                onAccentEnabled={setAccentEnabled}
               />
             ) : tab === "categories" ? (
               <CategoryTree doc={doc} selection={selection} onSelect={select} />
@@ -562,21 +632,32 @@ export default function App() {
             )}
           </aside>
 
-          <section className="panel center">
+          <section className={`panel center ${hexOpen ? "" : "collapsed"}`}>
             <div className="panel-head">
-              <span>Hex</span>
+              <button
+                className="panel-toggle"
+                onClick={() => setHexOpen(!hexOpen)}
+                title={hexOpen ? "Collapse the hex panel" : "Expand the hex panel"}
+                aria-label={hexOpen ? "Collapse the hex panel" : "Expand the hex panel"}
+                aria-expanded={hexOpen}
+              >
+                <Icon name={hexOpen ? "collapse" : "expand"} size={13} />
+                <span>Hex</span>
+              </button>
               <span className="dim mono">
                 {formatOffset(cursor)} · {bytes.length.toLocaleString()} bytes
               </span>
             </div>
-            <HexView
-              bytes={bytes}
-              changed={changed}
-              depth={doc.depthMap}
-              cursor={cursor}
-              selection={highlight}
-              onCursor={moveCursor}
-            />
+            {hexOpen && (
+              <HexView
+                bytes={bytes}
+                changed={changed}
+                depth={doc.depthMap}
+                cursor={cursor}
+                selection={highlight}
+                onCursor={moveCursor}
+              />
+            )}
           </section>
 
           <aside className="panel right">
@@ -585,6 +666,7 @@ export default function App() {
               selection={selection}
               onEditString={editString}
               onEditByte={editByte}
+              onEditTexture={editTextureField}
               onSelect={select}
             />
           </aside>

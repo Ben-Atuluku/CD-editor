@@ -7,23 +7,126 @@ import {
   type StringSlot,
 } from "../lib/cd";
 import type { Selection } from "../lib/selection";
+import { BODY_PARTS, describeMaterial } from "../lib/bodyParts";
+import { textureFields } from "../lib/texture";
+
+type TextureEdit = (node: ContainerNode, field: "material" | "slot", value: number) => void;
 
 interface Props {
   doc: CdDocument;
   selection: Selection | null;
   onEditString: (slot: StringSlot, text: string) => void;
   onEditByte: (offset: number, value: number) => void;
+  onEditTexture: TextureEdit;
   onSelect: (selection: Selection) => void;
+}
+
+/**
+ * Flux shows a character texture as three fields: Material, Texture Slot and
+ * Texture File. The first two are u32s in the MOBJ header, so they can be
+ * written in place; the file is the reference slot below this form.
+ */
+function TextureForm({
+  node,
+  doc,
+  onEditTexture,
+}: {
+  node: ContainerNode;
+  doc: CdDocument;
+  onEditTexture: TextureEdit;
+}) {
+  const fields = textureFields(node, doc.bytes);
+  const [slotDraft, setSlotDraft] = useState(fields ? String(fields.slot) : "");
+
+  useEffect(() => {
+    setSlotDraft(fields ? String(fields.slot) : "");
+  }, [node.id, fields?.slot]);
+
+  if (!fields) return null;
+
+  const mapped = describeMaterial(fields.material);
+
+  const commitSlot = () => {
+    const value = Number.parseInt(slotDraft, 10);
+    if (!Number.isFinite(value) || value < 0 || value > 0xffff) {
+      setSlotDraft(String(fields.slot));
+      return;
+    }
+    if (value !== fields.slot) onEditTexture(node, "slot", value);
+  };
+
+  return (
+    <div className="texture-form">
+      <div className="texture-row">
+        <label className="field-label" htmlFor="texture-material">
+          Material
+        </label>
+        <div className="texture-control">
+          <select
+            id="texture-material"
+            className="select-input"
+            value={fields.material}
+            onChange={(event) => onEditTexture(node, "material", Number(event.target.value))}
+          >
+            {!mapped && <option value={fields.material}>{fields.material} — unmapped</option>}
+            {BODY_PARTS.map((part) => (
+              <option key={`${part.value}-${part.label}`} value={part.value}>
+                {part.value} — {part.label}
+              </option>
+            ))}
+          </select>
+          <span className="texture-part">{mapped ?? "Not a known body part"}</span>
+        </div>
+      </div>
+
+      <div className="texture-row">
+        <label className="field-label" htmlFor="texture-slot">
+          Texture slot
+        </label>
+        <div className="texture-control">
+          <input
+            id="texture-slot"
+            className="text-input"
+            inputMode="numeric"
+            value={slotDraft}
+            spellCheck={false}
+            onChange={(event) => {
+              if (/^[0-9]{0,3}$/.test(event.target.value)) setSlotDraft(event.target.value);
+            }}
+            onBlur={commitSlot}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commitSlot();
+              if (event.key === "Escape") setSlotDraft(String(fields.slot));
+            }}
+          />
+        </div>
+      </div>
+
+      <details className="part-map">
+        <summary>Body part numbers</summary>
+        <ul>
+          {BODY_PARTS.map((part) => (
+            <li key={`${part.value}-${part.label}`}>
+              <span className="part-number">{part.value}</span>
+              {part.label}
+            </li>
+          ))}
+        </ul>
+      </details>
+    </div>
+  );
 }
 
 function StringInspector({
   slot,
   doc,
   onEditString,
+  onEditTexture,
 }: {
   slot: StringSlot;
   doc: CdDocument;
   onEditString: (slot: StringSlot, text: string) => void;
+  onEditTexture: TextureEdit;
 }) {
   const [draft, setDraft] = useState(slot.text);
 
@@ -33,6 +136,10 @@ function StringInspector({
 
   const path = containerPath(doc, slot.containerId);
   const dirty = draft !== slot.text;
+  const node = slot.containerId
+    ? doc.containers.find((candidate) => candidate.id === slot.containerId) ?? null
+    : null;
+  const texture = textureFields(node, doc.bytes);
 
   const commit = () => {
     if (!dirty || slot.readOnly) return;
@@ -61,8 +168,12 @@ function StringInspector({
         )}
       </div>
 
+      {texture && node && (
+        <TextureForm node={node} doc={doc} onEditTexture={onEditTexture} />
+      )}
+
       <label className="field-label" htmlFor="reference-value">
-        Value
+        {texture ? "Texture file" : "Value"}
       </label>
       <input
         id="reference-value"
@@ -136,10 +247,12 @@ function ContainerInspector({
   node,
   doc,
   onSelect,
+  onEditTexture,
 }: {
   node: ContainerNode;
   doc: CdDocument;
   onSelect: (selection: Selection) => void;
+  onEditTexture: TextureEdit;
 }) {
   const path = containerPath(doc, node.id);
   const parent = node.parentId
@@ -157,6 +270,10 @@ function ContainerInspector({
           </span>
         ))}
       </div>
+
+      {node.fourcc === "MOBJ" && (
+        <TextureForm node={node} doc={doc} onEditTexture={onEditTexture} />
+      )}
 
       <dl className="kv">
         <div>
@@ -339,7 +456,14 @@ function ByteInspector({
   );
 }
 
-export function Inspector({ doc, selection, onEditString, onEditByte, onSelect }: Props) {
+export function Inspector({
+  doc,
+  selection,
+  onEditString,
+  onEditByte,
+  onEditTexture,
+  onSelect,
+}: Props) {
   if (!selection) {
     return (
       <div className="inspector">
@@ -357,14 +481,24 @@ export function Inspector({ doc, selection, onEditString, onEditByte, onSelect }
   if (selection.kind === "string") {
     const slot = doc.strings.find((candidate) => candidate.offset === selection.offset);
     body = slot ? (
-      <StringInspector slot={slot} doc={doc} onEditString={onEditString} />
+      <StringInspector
+        slot={slot}
+        doc={doc}
+        onEditString={onEditString}
+        onEditTexture={onEditTexture}
+      />
     ) : (
       <div className="inspector-empty">That reference is no longer present.</div>
     );
   } else if (selection.kind === "container") {
     const node = doc.containers.find((candidate) => candidate.offset === selection.offset);
     body = node ? (
-      <ContainerInspector node={node} doc={doc} onSelect={onSelect} />
+      <ContainerInspector
+        node={node}
+        doc={doc}
+        onSelect={onSelect}
+        onEditTexture={onEditTexture}
+      />
     ) : (
       <div className="inspector-empty">That container is no longer present.</div>
     );
