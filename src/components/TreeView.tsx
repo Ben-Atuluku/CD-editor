@@ -175,6 +175,7 @@ export function TreeView({ doc, selection, onSelect, onEditString, onAddMobj }: 
           className={`tree-row ${active ? "active" : ""}`}
           style={{ paddingLeft: 8 + node.depth * 14 }}
           onClick={() => selectNode(node)}
+          onDoubleClick={() => primary && startEdit(primary)}
         >
           <button
             className="tree-chevron"
@@ -277,6 +278,7 @@ export function TreeView({ doc, selection, onSelect, onEditString, onAddMobj }: 
                     onClick={() =>
                       onSelect({ kind: "string", offset: slot.offset, length: slot.byteLength })
                     }
+                    onDoubleClick={() => startEdit(slot)}
                   >
                     {slot.text}
                   </button>

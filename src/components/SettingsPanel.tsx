@@ -3,16 +3,20 @@ export type Theme = "light" | "dark";
 export interface AccentOption {
   id: string;
   label: string;
-  value: string;
-  ink: string;
+  /** Shade used on the dark interface. */
+  dark: string;
+  /** Darker shade used on the light interface so contrast stays legible. */
+  light: string;
+  inkDark: string;
+  inkLight: string;
 }
 
 export const ACCENTS: AccentOption[] = [
-  { id: "mono", label: "Mono", value: "", ink: "" },
-  { id: "amber", label: "Amber", value: "#e5a100", ink: "#140f02" },
-  { id: "blue", label: "Blue", value: "#2f6fed", ink: "#ffffff" },
-  { id: "green", label: "Green", value: "#1f9d63", ink: "#ffffff" },
-  { id: "rose", label: "Rose", value: "#d94f74", ink: "#ffffff" },
+  { id: "blue", label: "Blue", dark: "#3b82f6", light: "#2563eb", inkDark: "#ffffff", inkLight: "#ffffff" },
+  { id: "green", label: "Green", dark: "#22c55e", light: "#15803d", inkDark: "#06210f", inkLight: "#ffffff" },
+  { id: "violet", label: "Violet", dark: "#8b5cf6", light: "#6d28d9", inkDark: "#ffffff", inkLight: "#ffffff" },
+  { id: "orange", label: "Orange", dark: "#f97316", light: "#c2410c", inkDark: "#1a0c02", inkLight: "#ffffff" },
+  { id: "rose", label: "Rose", dark: "#f43f5e", light: "#be123c", inkDark: "#ffffff", inkLight: "#ffffff" },
 ];
 
 interface Props {
@@ -51,27 +55,16 @@ export function SettingsPanel({ theme, onTheme, accentId, onAccent }: Props) {
               key={accent.id}
               className={`swatch-btn ${accentId === accent.id ? "active" : ""}`}
               onClick={() => onAccent(accent.id)}
+              title={accent.label}
             >
               <span
-                className={`swatch-dot ${accent.value ? "" : "mono"}`}
-                style={accent.value ? { background: accent.value } : undefined}
+                className="swatch-dot"
+                style={{ background: theme === "dark" ? accent.dark : accent.light }}
               />
               {accent.label}
             </button>
           ))}
         </div>
-        <p className="hint">
-          Mono keeps the interface black and white. Any other choice colours the primary action and
-          the active selection only.
-        </p>
-      </section>
-
-      <section className="settings-group">
-        <h3>About</h3>
-        <p className="hint">
-          Everything is parsed and edited in this page. Exported files keep every byte you did not
-          touch.
-        </p>
       </section>
     </div>
   );

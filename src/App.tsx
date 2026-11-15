@@ -8,8 +8,8 @@ import {
   type StringSlot,
 } from "./lib/cd";
 import { ACCENTS, SettingsPanel, type Theme } from "./components/SettingsPanel";
-import { buildSampleCd } from "./lib/sample";
 import type { Selection } from "./lib/selection";
+import { Icon } from "./components/Icon";
 import { HexView } from "./components/HexView";
 import { Inspector } from "./components/Inspector";
 import { CategoryTree } from "./components/CategoryTree";
@@ -47,7 +47,10 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(() =>
     localStorage.getItem("cd:theme") === "light" ? "light" : "dark",
   );
-  const [accentId, setAccentId] = useState<string>(() => localStorage.getItem("cd:accent") ?? "mono");
+  const [accentId, setAccentId] = useState<string>(() => {
+    const stored = localStorage.getItem("cd:accent");
+    return ACCENTS.some((entry) => entry.id === stored) ? (stored as string) : "blue";
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback((name: string, data: Uint8Array) => {
@@ -95,11 +98,6 @@ export default function App() {
     },
     [load],
   );
-
-  const loadSample = useCallback(() => {
-    const sample = buildSampleCd();
-    load(sample.name, sample.bytes);
-  }, [load]);
 
   const sendToInbox = useCallback(async () => {
     if (!bytes) return;
@@ -325,19 +323,16 @@ export default function App() {
   useEffect(() => {
     const accent = ACCENTS.find((entry) => entry.id === accentId) ?? ACCENTS[0];
     const root = document.documentElement;
-    if (accent.value) {
-      root.style.setProperty("--accent", accent.value);
-      root.style.setProperty("--accent-ink", accent.ink);
-    } else {
-      root.style.removeProperty("--accent");
-      root.style.removeProperty("--accent-ink");
-    }
+    // Each accent has a dark-interface and a light-interface shade so contrast
+    // holds on both backgrounds.
+    root.style.setProperty("--accent", theme === "dark" ? accent.dark : accent.light);
+    root.style.setProperty("--accent-ink", theme === "dark" ? accent.inkDark : accent.inkLight);
     try {
       localStorage.setItem("cd:accent", accent.id);
     } catch {
       // Private-mode storage failures are harmless.
     }
-  }, [accentId]);
+  }, [accentId, theme]);
 
   const fileSize = bytes?.length ?? 0;
 
@@ -375,7 +370,6 @@ export default function App() {
           <span className="brand-mark">CD</span>
           <div className="brand-text">
             <h1>Character Definition Editor</h1>
-            <p>TT Games / LEGO · structure-aware hex editing</p>
           </div>
         </div>
 
@@ -398,8 +392,9 @@ export default function App() {
           className="theme-toggle"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
         >
-          {theme}
+          <Icon name={theme === "dark" ? "moon" : "sun"} size={16} />
         </button>
 
         {mode === "editor" && doc && (
@@ -414,39 +409,62 @@ export default function App() {
 
         {mode === "editor" ? (
           <div className="actions">
-            <button className="btn" onClick={() => fileInputRef.current?.click()}>
-              Open file
-            </button>
-            <button className="btn" onClick={undo} disabled={undoStack.length === 0} title="Ctrl+Z">
-              Undo
-            </button>
-            <button className="btn" onClick={redo} disabled={redoStack.length === 0} title="Ctrl+Shift+Z">
-              Redo
-            </button>
-            <button className="btn" onClick={revert} disabled={!dirty}>
-              Revert
+            <button
+              className="icon-btn"
+              onClick={() => fileInputRef.current?.click()}
+              title="Open .CD file"
+              aria-label="Open .CD file"
+            >
+              <Icon name="open" />
             </button>
             <button
-              className="btn"
+              className="icon-btn"
+              onClick={undo}
+              disabled={undoStack.length === 0}
+              title="Undo (Ctrl+Z)"
+              aria-label="Undo"
+            >
+              <Icon name="undo" />
+            </button>
+            <button
+              className="icon-btn"
+              onClick={redo}
+              disabled={redoStack.length === 0}
+              title="Redo (Ctrl+Shift+Z)"
+              aria-label="Redo"
+            >
+              <Icon name="redo" />
+            </button>
+            <button
+              className="icon-btn"
+              onClick={revert}
+              disabled={!dirty}
+              title="Revert to the loaded file"
+              aria-label="Revert"
+            >
+              <Icon name="revert" />
+            </button>
+            <button
+              className="icon-btn"
               onClick={sendToInbox}
               disabled={!bytes}
-              title="Write this file into the project's samples/ folder for analysis"
+              title="Send for analysis (writes to samples/)"
+              aria-label="Send for analysis"
             >
-              Send for analysis
+              <Icon name="upload" />
             </button>
             <button
-              className="btn primary"
+              className="icon-btn primary"
               onClick={exportFile}
               disabled={!bytes}
-              title="Ctrl+S"
+              title="Export .CD (Ctrl+S)"
+              aria-label="Export .CD"
             >
-              Export .CD
+              <Icon name="download" />
             </button>
           </div>
         ) : (
-          <div className="actions">
-            <span className="compare-hint">Structural comparison · one file per side</span>
-          </div>
+          <div className="actions" />
         )}
       </header>
 
@@ -474,47 +492,17 @@ export default function App() {
               <span className="brick" />
             </div>
             <h2>Drop a .CD file here</h2>
-            <p>
-              Character definition files from LEGO Indiana Jones 2 onward. Everything is parsed in
-              this browser — nothing is uploaded.
-            </p>
             <div className="dropzone-actions">
-              <button className="btn primary" onClick={(event) => { event.stopPropagation(); fileInputRef.current?.click(); }}>
+              <button
+                className="btn primary"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+              >
                 Choose file
               </button>
-              <button className="btn" onClick={(event) => { event.stopPropagation(); loadSample(); }}>
-                Load sample file
-              </button>
             </div>
-            <p className="dropzone-note">
-              Can’t attach a .CD to the chat? Load it here and use <strong>Send for analysis</strong> —
-              the file is written into this project’s <code>samples/</code> folder so it can be read
-              from the workspace.
-            </p>
-          </div>
-
-          <div className="empty-grid">
-            <article>
-              <h3>Containers, not guesswork</h3>
-              <p>
-                OLST and MOBJ blocks are located by validating their size and name fields, then
-                nested into a tree. Each block's own bytes are tinted in the hex grid.
-              </p>
-            </article>
-            <article>
-              <h3>References stay fixed-size</h3>
-              <p>
-                Textures, animations and sounds are inline slots. Edit a path, get zero padding for
-                the unused tail — the same result as hand-patching, without counting bytes.
-              </p>
-            </article>
-            <article>
-              <h3>Bytes when you need them</h3>
-              <p>
-                The hex view is a real editor: inspect u16/u32/floats, patch any byte, undo it, and
-                export a copy with every untouched byte preserved.
-              </p>
-            </article>
           </div>
         </main>
       ) : (

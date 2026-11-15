@@ -138,7 +138,7 @@ export function CompareView({ current }: Props) {
         <Slot
           label="A"
           doc={a}
-          accent="var(--accent)"
+          accent="var(--fg)"
           onFile={(file) => void load(file, setA)}
           onUseCurrent={() => current && setA(current)}
           hasCurrent={Boolean(current)}
@@ -146,7 +146,7 @@ export function CompareView({ current }: Props) {
         <Slot
           label="B"
           doc={b}
-          accent="var(--muted)"
+          accent="var(--dim)"
           onFile={(file) => void load(file, setB)}
           onUseCurrent={() => current && setB(current)}
           hasCurrent={Boolean(current)}
@@ -204,8 +204,8 @@ export function CompareView({ current }: Props) {
             <div className="outline-scroll">
               {outline.map((row, index) => (
                 <div className={`outline-row ${row.differs ? "differs" : ""}`} key={index}>
-                  <OutlineCell entry={row.a} accent="var(--accent)" />
-                  <OutlineCell entry={row.b} accent="var(--muted)" />
+                  <OutlineCell entry={row.a} accent="var(--fg)" />
+                  <OutlineCell entry={row.b} accent="var(--dim)" />
                 </div>
               ))}
             </div>
