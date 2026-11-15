@@ -1,0 +1,551 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  encodeReplacement,
+  formatOffset,
+  parseCd,
+  type CdDocument,
+  type StringSlot,
+} from "./lib/cd";
+import { buildSampleCd } from "./lib/sample";
+import type { Selection } from "./lib/selection";
+import { HexView } from "./components/HexView";
+import { Inspector } from "./components/Inspector";
+import { CategoryTree } from "./components/CategoryTree";
+import { CompareView } from "./components/CompareView";
+import { References } from "./components/References";
+import { TreeView } from "./components/TreeView";
+
+interface Hunk {
+  offset: number;
+  before: Uint8Array;
+  after: Uint8Array;
+}
+
+interface Edit {
+  hunks: Hunk[];
+  label: string;
+}
+
+export default function App() {
+  const [fileName, setFileName] = useState("untitled.cd");
+  const [original, setOriginal] = useState<Uint8Array | null>(null);
+  const [bytes, setBytes] = useState<Uint8Array | null>(null);
+  const [doc, setDoc] = useState<CdDocument | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [cursor, setCursor] = useState(0);
+  const [undoStack, setUndoStack] = useState<Edit[]>([]);
+  const [redoStack, setRedoStack] = useState<Edit[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [tab, setTab] = useState<"categories" | "blocks" | "references">("blocks");
+  const [mode, setMode] = useState<"editor" | "compare">("editor");
+  const [filter, setFilter] = useState("");
+  const [warningsOpen, setWarningsOpen] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const load = useCallback((name: string, data: Uint8Array) => {
+    const copy = Uint8Array.from(data);
+    const parsed = parseCd(copy, name);
+    setFileName(name);
+    setOriginal(Uint8Array.from(copy));
+    setBytes(copy);
+    setDoc(parsed);
+    setUndoStack([]);
+    setRedoStack([]);
+    setFilter("");
+    setWarningsOpen(true);
+    setTab(parsed.containers.length > 0 ? "blocks" : "categories");
+    const first = parsed.strings.find((slot) => !slot.readOnly) ?? parsed.strings[0];
+    if (first) {
+      setSelection({ kind: "string", offset: first.offset, length: first.byteLength });
+      setCursor(first.offset);
+    } else if (parsed.containers[0]) {
+      setSelection({
+        kind: "container",
+        offset: parsed.containers[0].offset,
+        length: parsed.containers[0].size,
+      });
+      setCursor(parsed.containers[0].offset);
+    } else {
+      setSelection(null);
+      setCursor(0);
+    }
+    setNotice(
+      parsed.containers.length > 0
+        ? `Loaded ${name} — ${parsed.containers.length} containers, ${parsed.strings.length} references.`
+        : `Loaded ${name} — no OLST/MOBJ containers were detected.`,
+    );
+  }, []);
+
+  const openFile = useCallback(
+    async (file: File) => {
+      try {
+        const buffer = await file.arrayBuffer();
+        load(file.name, new Uint8Array(buffer));
+      } catch {
+        setNotice(`Could not read ${file.name}.`);
+      }
+    },
+    [load],
+  );
+
+  const loadSample = useCallback(() => {
+    const sample = buildSampleCd();
+    load(sample.name, sample.bytes);
+  }, [load]);
+
+  const sendToInbox = useCallback(async () => {
+    if (!bytes) return;
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    try {
+      const response = await fetch(`/api/samples?name=${encodeURIComponent(fileName)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: copy,
+      });
+      const data = (await response.json()) as { ok?: boolean; path?: string; error?: string };
+      if (data.ok && data.path) {
+        setNotice(`Saved to ${data.path}. Ask Buffy to analyse it.`);
+      } else {
+        setNotice(`Inbox rejected the file: ${data.error ?? response.statusText}`);
+      }
+    } catch {
+      setNotice("Analysis inbox needs the running preview — it is not available in a static build.");
+    }
+  }, [bytes, fileName]);
+
+  const applyHunks = useCallback(
+    (hunks: Hunk[], label: string) => {
+      if (!bytes) return;
+      const next = Uint8Array.from(bytes);
+      for (const hunk of hunks) next.set(hunk.after, hunk.offset);
+      setBytes(next);
+      setDoc(parseCd(next, fileName));
+      setUndoStack((stack) => [...stack, { hunks, label }]);
+      setRedoStack([]);
+    },
+    [bytes, fileName],
+  );
+
+  const undo = useCallback(() => {
+    if (!bytes || undoStack.length === 0) return;
+    const edit = undoStack[undoStack.length - 1];
+    const next = Uint8Array.from(bytes);
+    for (const hunk of edit.hunks) next.set(hunk.before, hunk.offset);
+    setBytes(next);
+    setDoc(parseCd(next, fileName));
+    setUndoStack((stack) => stack.slice(0, -1));
+    setRedoStack((stack) => [...stack, edit]);
+    setNotice(`Undid: ${edit.label}`);
+  }, [bytes, undoStack, fileName]);
+
+  const redo = useCallback(() => {
+    if (!bytes || redoStack.length === 0) return;
+    const edit = redoStack[redoStack.length - 1];
+    const next = Uint8Array.from(bytes);
+    for (const hunk of edit.hunks) next.set(hunk.after, hunk.offset);
+    setBytes(next);
+    setDoc(parseCd(next, fileName));
+    setRedoStack((stack) => stack.slice(0, -1));
+    setUndoStack((stack) => [...stack, edit]);
+    setNotice(`Redid: ${edit.label}`);
+  }, [bytes, redoStack, fileName]);
+
+  const exportFile = useCallback(() => {
+    if (!bytes) return;
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    const blob = new Blob([copy], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${fileName.replace(/\.cd$/i, "")}_edited.cd`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice(`Exported ${anchor.download}.`);
+  }, [bytes, fileName]);
+
+  const revert = useCallback(() => {
+    if (!original) return;
+    const next = Uint8Array.from(original);
+    setBytes(next);
+    setDoc(parseCd(next, fileName));
+    setUndoStack([]);
+    setRedoStack([]);
+    setNotice("Reverted to the file as it was loaded.");
+  }, [original, fileName]);
+
+  const editString = useCallback(
+    (slot: StringSlot, text: string) => {
+      if (!bytes) return;
+      const result = encodeReplacement(slot, text);
+      if (!result.ok) {
+        setNotice(result.error);
+        return;
+      }
+      if (text === slot.text) return;
+      applyHunks(
+        [
+          {
+            offset: slot.offset,
+            before: bytes.slice(slot.offset, slot.offset + slot.byteLength),
+            after: result.bytes,
+          },
+        ],
+        `reference "${slot.text}" → "${text}"`,
+      );
+      setSelection({ kind: "string", offset: slot.offset, length: slot.byteLength });
+      setCursor(slot.offset);
+      setNotice(`Repointed reference at ${formatOffset(slot.offset)}.`);
+    },
+    [bytes, applyHunks],
+  );
+
+  const editByte = useCallback(
+    (offset: number, value: number) => {
+      if (!bytes) return;
+      applyHunks(
+        [{ offset, before: bytes.slice(offset, offset + 1), after: Uint8Array.of(value) }],
+        `byte at ${formatOffset(offset)}`,
+      );
+      setCursor(offset);
+      setSelection({ kind: "byte", offset, length: 1 });
+      setNotice(`${formatOffset(offset)} set to 0x${value.toString(16).toUpperCase().padStart(2, "0")}.`);
+    },
+    [bytes, applyHunks],
+  );
+
+  const changed = useMemo(() => {
+    const set = new Set<number>();
+    if (!original || !bytes) return set;
+    const limit = Math.min(original.length, bytes.length);
+    for (let index = 0; index < limit; index++) {
+      if (original[index] !== bytes[index]) set.add(index);
+    }
+    return set;
+  }, [original, bytes]);
+
+  const dirty = changed.size > 0;
+
+  const highlight = selection
+    ? { offset: selection.offset, length: Math.max(1, selection.length) }
+    : null;
+
+  const select = useCallback((next: Selection) => {
+    setSelection(next);
+    setCursor(next.offset);
+  }, []);
+
+  const moveCursor = useCallback((offset: number) => {
+    setCursor(offset);
+    setSelection({ kind: "byte", offset, length: 1 });
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod) return;
+      const key = event.key.toLowerCase();
+      if (key === "s") {
+        event.preventDefault();
+        exportFile();
+      } else if (key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [exportFile, undo, redo]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 4200);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const fileSize = bytes?.length ?? 0;
+
+  return (
+    <div
+      className="app"
+      onDragOver={(event) => {
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget === event.target) setDragging(false);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        const file = event.dataTransfer.files?.[0];
+        if (file) void openFile(file);
+      }}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".cd,.CD,application/octet-stream"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void openFile(file);
+          event.target.value = "";
+        }}
+      />
+
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark">CD</span>
+          <div className="brand-text">
+            <h1>Character Definition Editor</h1>
+            <p>TT Games / LEGO · structure-aware hex editing</p>
+          </div>
+        </div>
+
+        <div className="mode-switch">
+          <button
+            className={mode === "editor" ? "mode active" : "mode"}
+            onClick={() => setMode("editor")}
+          >
+            Editor
+          </button>
+          <button
+            className={mode === "compare" ? "mode active" : "mode"}
+            onClick={() => setMode("compare")}
+          >
+            Compare
+          </button>
+        </div>
+
+        {mode === "editor" && doc && (
+          <div className="file-chip">
+            <span className={`dot ${dirty ? "dirty" : ""}`} />
+            <span className="file-name">{fileName}</span>
+            <span className="dim mono">
+              {fileSize.toLocaleString()} B · {doc.containers.length} blocks
+            </span>
+          </div>
+        )}
+
+        {mode === "editor" ? (
+          <div className="actions">
+            <button className="btn" onClick={() => fileInputRef.current?.click()}>
+              Open file
+            </button>
+            <button className="btn" onClick={undo} disabled={undoStack.length === 0} title="Ctrl+Z">
+              Undo
+            </button>
+            <button className="btn" onClick={redo} disabled={redoStack.length === 0} title="Ctrl+Shift+Z">
+              Redo
+            </button>
+            <button className="btn" onClick={revert} disabled={!dirty}>
+              Revert
+            </button>
+            <button
+              className="btn"
+              onClick={sendToInbox}
+              disabled={!bytes}
+              title="Write this file into the project's samples/ folder for analysis"
+            >
+              Send for analysis
+            </button>
+            <button
+              className="btn primary"
+              onClick={exportFile}
+              disabled={!bytes}
+              title="Ctrl+S"
+            >
+              Export .CD
+            </button>
+          </div>
+        ) : (
+          <div className="actions">
+            <span className="compare-hint">Structural comparison · one file per side</span>
+          </div>
+        )}
+      </header>
+
+      {mode === "editor" && doc && doc.warnings.length > 0 && warningsOpen && (
+        <div className="warnings">
+          <span className="warnings-title">{doc.warnings.length} structural note{doc.warnings.length === 1 ? "" : "s"}</span>
+          <span className="warnings-text">{doc.warnings[0]}</span>
+          <button className="link" onClick={() => setWarningsOpen(false)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {mode === "compare" ? (
+        <CompareView current={doc} />
+      ) : !doc || !bytes ? (
+        <main className="empty">
+          <div
+            className={`dropzone ${dragging ? "over" : ""}`}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <div className="dropzone-icon" aria-hidden="true">
+              <span className="brick" />
+              <span className="brick offset" />
+              <span className="brick" />
+            </div>
+            <h2>Drop a .CD file here</h2>
+            <p>
+              Character definition files from LEGO Indiana Jones 2 onward. Everything is parsed in
+              this browser — nothing is uploaded.
+            </p>
+            <div className="dropzone-actions">
+              <button className="btn primary" onClick={(event) => { event.stopPropagation(); fileInputRef.current?.click(); }}>
+                Choose file
+              </button>
+              <button className="btn" onClick={(event) => { event.stopPropagation(); loadSample(); }}>
+                Load sample file
+              </button>
+            </div>
+            <p className="dropzone-note">
+              Can’t attach a .CD to the chat? Load it here and use <strong>Send for analysis</strong> —
+              the file is written into this project’s <code>samples/</code> folder so it can be read
+              from the workspace.
+            </p>
+          </div>
+
+          <div className="empty-grid">
+            <article>
+              <h3>Containers, not guesswork</h3>
+              <p>
+                OLST and MOBJ blocks are located by validating their size and name fields, then
+                nested into a tree. Each block's own bytes are tinted in the hex grid.
+              </p>
+            </article>
+            <article>
+              <h3>References stay fixed-size</h3>
+              <p>
+                Textures, animations and sounds are inline slots. Edit a path, get zero padding for
+                the unused tail — the same result as hand-patching, without counting bytes.
+              </p>
+            </article>
+            <article>
+              <h3>Bytes when you need them</h3>
+              <p>
+                The hex view is a real editor: inspect u16/u32/floats, patch any byte, undo it, and
+                export a copy with every untouched byte preserved.
+              </p>
+            </article>
+          </div>
+        </main>
+      ) : (
+        <main className="workspace">
+          <aside className="panel">
+            <div className="tabs">
+              <button
+                className={tab === "blocks" ? "tab active" : "tab"}
+                onClick={() => setTab("blocks")}
+              >
+                Tree <span className="tab-count">{doc.containers.length}</span>
+              </button>
+              <button
+                className={tab === "categories" ? "tab active" : "tab"}
+                onClick={() => setTab("categories")}
+              >
+                Categories
+              </button>
+              <button
+                className={tab === "references" ? "tab active" : "tab"}
+                onClick={() => setTab("references")}
+              >
+                All refs <span className="tab-count">{doc.strings.length}</span>
+              </button>
+            </div>
+            {tab === "categories" ? (
+              <CategoryTree doc={doc} selection={selection} onSelect={select} />
+            ) : tab === "blocks" ? (
+              <TreeView doc={doc} selection={selection} onSelect={select} />
+            ) : (
+              <References
+                doc={doc}
+                filter={filter}
+                onFilter={setFilter}
+                selection={selection}
+                onSelect={select}
+              />
+            )}
+          </aside>
+
+          <section className="panel center">
+            <div className="panel-head">
+              <span>Hex</span>
+              <span className="dim mono">
+                {formatOffset(cursor)} · {bytes.length.toLocaleString()} bytes
+              </span>
+            </div>
+            <HexView
+              bytes={bytes}
+              changed={changed}
+              depth={doc.depthMap}
+              cursor={cursor}
+              selection={highlight}
+              onCursor={moveCursor}
+            />
+          </section>
+
+          <aside className="panel right">
+            <Inspector
+              doc={doc}
+              selection={selection}
+              onEditString={editString}
+              onEditByte={editByte}
+              onSelect={select}
+            />
+          </aside>
+        </main>
+      )}
+
+      <footer className="statusbar">
+        {mode === "compare" ? (
+          <>
+            <span className="dim">
+              Structural comparison · load one generation per side · files stay in this page
+            </span>
+            <span className="status-spacer" />
+            <button className="link" onClick={() => setMode("editor")}>
+              Back to editor
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="mono">{formatOffset(cursor)}</span>
+            <span className="status-sep" />
+            <span>{fileSize.toLocaleString()} bytes</span>
+            <span className="status-sep" />
+            <span>{doc?.containers.length ?? 0} containers</span>
+            <span className="status-sep" />
+            <span>{doc?.strings.length ?? 0} references</span>
+            <span className="status-sep" />
+            <span className="dim">SINF {doc?.profile.streamInfoSize ?? 0} B</span>
+            <span className="status-sep" />
+            <span className={dirty ? "status-dirty" : "dim"}>
+              {dirty ? `${changed.size} byte${changed.size === 1 ? "" : "s"} changed` : "unmodified"}
+            </span>
+            <span className="status-spacer" />
+            <span className="dim">Ctrl+S export · Ctrl+Z undo</span>
+          </>
+        )}
+      </footer>
+
+      {notice && <div className="toast">{notice}</div>}
+    </div>
+  );
+}
