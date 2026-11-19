@@ -23,11 +23,26 @@ import type { ReassignCandidate } from "./lib/reassign";
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+// The single-file offline build can run from a file:// origin, where storage
+// access throws instead of returning null.
+const readStored = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
 const storedNumber = (key: string, fallback: number) => {
-  const stored = Number(localStorage.getItem(key));
+  const stored = Number(readStored(key));
   return Number.isFinite(stored) && stored > 0 ? stored : fallback;
 };
-import { ACCENTS, SettingsPanel, type Theme } from "./components/SettingsPanel";
+import {
+  ACCENTS,
+  SettingsPanel,
+  type CornerStyle,
+  type Theme,
+} from "./components/SettingsPanel";
 import type { Selection } from "./lib/selection";
 import { Icon } from "./components/Icon";
 import { HexView } from "./components/HexView";
@@ -36,6 +51,7 @@ import { CategoryTree } from "./components/CategoryTree";
 import { CompareView } from "./components/CompareView";
 import { References } from "./components/References";
 import { TreeView } from "./components/TreeView";
+import { GraphView } from "./components/GraphView";
 
 interface Hunk {
   offset: number;
@@ -60,19 +76,28 @@ export default function App() {
   const [redoStack, setRedoStack] = useState<Edit[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [tab, setTab] = useState<"categories" | "blocks" | "references" | "settings">("blocks");
+  const [tab, setTab] = useState<"categories" | "blocks" | "web" | "references" | "settings">(
+    "blocks",
+  );
   const [mode, setMode] = useState<"editor" | "compare">("editor");
   const [filter, setFilter] = useState("");
   const [warningsOpen, setWarningsOpen] = useState(true);
   const [theme, setTheme] = useState<Theme>(() =>
-    localStorage.getItem("cd:theme") === "light" ? "light" : "dark",
+    readStored("cd:theme") === "light" ? "light" : "dark",
   );
   const [accentId, setAccentId] = useState<string>(() => {
-    const stored = localStorage.getItem("cd:accent");
+    const stored = readStored("cd:accent");
     return ACCENTS.some((entry) => entry.id === stored) ? (stored as string) : "blue";
   });
   const [accentEnabled, setAccentEnabled] = useState<boolean>(
-    () => localStorage.getItem("cd:accent-on") !== "no",
+    () => readStored("cd:accent-on") !== "no",
+  );
+  const [hexEnabled, setHexEnabled] = useState<boolean>(() => readStored("cd:hex-on") !== "no");
+  const [corners, setCorners] = useState<CornerStyle>(() =>
+    readStored("cd:corners") === "sharp" ? "sharp" : "round",
+  );
+  const [tagColors, setTagColors] = useState<boolean>(
+    () => readStored("cd:tag-colors") === "yes",
   );
   const [hexOpen, setHexOpen] = useState(true);
   const [hexHeight, setHexHeight] = useState(() => clamp(storedNumber("cd:hex-h", 250), 120, 900));
@@ -129,27 +154,6 @@ export default function App() {
     },
     [load],
   );
-
-  const sendToInbox = useCallback(async () => {
-    if (!bytes) return;
-    const copy = new Uint8Array(bytes.byteLength);
-    copy.set(bytes);
-    try {
-      const response = await fetch(`/api/samples?name=${encodeURIComponent(fileName)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: copy,
-      });
-      const data = (await response.json()) as { ok?: boolean; path?: string; error?: string };
-      if (data.ok && data.path) {
-        setNotice(`Saved to ${data.path}. Ask Buffy to analyse it.`);
-      } else {
-        setNotice(`Inbox rejected the file: ${data.error ?? response.statusText}`);
-      }
-    } catch {
-      setNotice("Analysis inbox needs the running preview — it is not available in a static build.");
-    }
-  }, [bytes, fileName]);
 
   const applyEdit = useCallback(
     (next: Uint8Array, label: string) => {
@@ -469,6 +473,17 @@ export default function App() {
   }, [inspectorWidth, hexHeight]);
 
   useEffect(() => {
+    document.documentElement.dataset.corners = corners;
+    try {
+      localStorage.setItem("cd:corners", corners);
+      localStorage.setItem("cd:hex-on", hexEnabled ? "yes" : "no");
+      localStorage.setItem("cd:tag-colors", tagColors ? "yes" : "no");
+    } catch {
+      // Private-mode storage failures are harmless.
+    }
+  }, [corners, hexEnabled, tagColors]);
+
+  useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 4200);
     return () => window.clearTimeout(timer);
@@ -616,22 +631,13 @@ export default function App() {
               <Icon name="revert" />
             </button>
             <button
-              className="icon-btn"
-              onClick={sendToInbox}
-              disabled={!bytes}
-              title="Send for analysis (writes to samples/)"
-              aria-label="Send for analysis"
-            >
-              <Icon name="upload" />
-            </button>
-            <button
               className="icon-btn primary"
               onClick={exportFile}
               disabled={!bytes}
-              title="Export .CD (Ctrl+S)"
-              aria-label="Export .CD"
+              title="Save a copy of the .CD (Ctrl+S)"
+              aria-label="Save a copy of the .CD"
             >
-              <Icon name="download" />
+              <Icon name="save" />
             </button>
           </div>
         ) : (
@@ -678,7 +684,7 @@ export default function App() {
         </main>
       ) : (
         <main
-          className={`workspace ${hexOpen ? "" : "hex-collapsed"}`}
+          className={`workspace ${!hexEnabled ? "hex-hidden" : hexOpen ? "" : "hex-collapsed"}`}
           style={
             {
               "--inspector-w": `${inspectorWidth}px`,
@@ -697,6 +703,15 @@ export default function App() {
                   aria-pressed={tab === "blocks"}
                 >
                   <Icon name="tree" />
+                </button>
+                <button
+                  className={tab === "web" ? "tool-btn active" : "tool-btn"}
+                  onClick={() => setTab("web")}
+                  title="Web — OLST groups linked to their MOBJ entries"
+                  aria-label="Web view"
+                  aria-pressed={tab === "web"}
+                >
+                  <Icon name="web" />
                 </button>
                 <button
                   className={tab === "categories" ? "tool-btn active" : "tool-btn"}
@@ -735,7 +750,15 @@ export default function App() {
                 onAccent={setAccentId}
                 accentEnabled={accentEnabled}
                 onAccentEnabled={setAccentEnabled}
+                hexEnabled={hexEnabled}
+                onHexEnabled={setHexEnabled}
+                corners={corners}
+                onCorners={setCorners}
+                tagColors={tagColors}
+                onTagColors={setTagColors}
               />
+            ) : tab === "web" ? (
+              <GraphView doc={doc} selection={selection} onSelect={select} />
             ) : tab === "categories" ? (
               <CategoryTree doc={doc} selection={selection} onSelect={select} />
             ) : tab === "blocks" ? (
@@ -745,6 +768,7 @@ export default function App() {
                 onSelect={select}
                 onEditString={editString}
                 onAddMobj={addMobjToGroup}
+                tagColors={tagColors}
               />
             ) : (
               <References
@@ -757,6 +781,7 @@ export default function App() {
             )}
           </aside>
 
+          {hexEnabled && (
           <section className={`panel center ${hexOpen ? "" : "collapsed"}`}>
             {hexOpen && (
               <div
@@ -802,6 +827,7 @@ export default function App() {
               />
             )}
           </section>
+          )}
 
           <aside className="panel right">
             <div

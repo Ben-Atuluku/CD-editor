@@ -1,4 +1,5 @@
 export type Theme = "light" | "dark";
+export type CornerStyle = "round" | "sharp";
 
 export interface AccentOption {
   id: string;
@@ -17,6 +18,8 @@ export const ACCENTS: AccentOption[] = [
   { id: "violet", label: "Violet", dark: "#8b5cf6", light: "#6d28d9", inkDark: "#ffffff", inkLight: "#ffffff" },
   { id: "orange", label: "Orange", dark: "#f97316", light: "#c2410c", inkDark: "#1a0c02", inkLight: "#ffffff" },
   { id: "rose", label: "Rose", dark: "#f43f5e", light: "#be123c", inkDark: "#ffffff", inkLight: "#ffffff" },
+  { id: "red", label: "Red", dark: "#ef4444", light: "#dc2626", inkDark: "#ffffff", inkLight: "#ffffff" },
+  { id: "yellow", label: "Yellow", dark: "#eab308", light: "#a16207", inkDark: "#1a1402", inkLight: "#ffffff" },
 ];
 
 interface Props {
@@ -26,6 +29,35 @@ interface Props {
   onAccent: (id: string) => void;
   accentEnabled: boolean;
   onAccentEnabled: (enabled: boolean) => void;
+  hexEnabled: boolean;
+  onHexEnabled: (enabled: boolean) => void;
+  corners: CornerStyle;
+  onCorners: (style: CornerStyle) => void;
+  tagColors: boolean;
+  onTagColors: (enabled: boolean) => void;
+}
+
+function Toggle({
+  on,
+  label,
+  onChange,
+}: {
+  on: boolean;
+  label: string;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      className={`switch ${on ? "on" : ""}`}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      title={on ? `Turn ${label.toLowerCase()} off` : `Turn ${label.toLowerCase()} on`}
+      onClick={() => onChange(!on)}
+    >
+      <span className="switch-knob" />
+    </button>
+  );
 }
 
 export function SettingsPanel({
@@ -35,6 +67,12 @@ export function SettingsPanel({
   onAccent,
   accentEnabled,
   onAccentEnabled,
+  hexEnabled,
+  onHexEnabled,
+  corners,
+  onCorners,
+  tagColors,
+  onTagColors,
 }: Props) {
   return (
     <div className="settings">
@@ -59,16 +97,7 @@ export function SettingsPanel({
       <section className="settings-group">
         <div className="settings-head">
           <h3>Accent</h3>
-          <button
-            className={`switch ${accentEnabled ? "on" : ""}`}
-            role="switch"
-            aria-checked={accentEnabled}
-            aria-label="Use an accent colour"
-            title={accentEnabled ? "Turn the accent off" : "Turn the accent on"}
-            onClick={() => onAccentEnabled(!accentEnabled)}
-          >
-            <span className="switch-knob" />
-          </button>
+          <Toggle on={accentEnabled} label="Accent" onChange={onAccentEnabled} />
         </div>
         <div className={`swatch-list ${accentEnabled ? "" : "off"}`}>
           {ACCENTS.map((accent) => (
@@ -90,6 +119,49 @@ export function SettingsPanel({
         <p className="hint">
           Off leaves focus, selection and links monochrome — the interface is black, white and grey
           only.
+        </p>
+      </section>
+
+      <section className="settings-group">
+        <h3>Panels</h3>
+        <div className="setting-row">
+          <span>Hexadecimal window</span>
+          <Toggle on={hexEnabled} label="Hexadecimal window" onChange={onHexEnabled} />
+        </div>
+        <p className="hint">
+          The tree panel stays put whether the hex strip is shown or hidden.
+        </p>
+      </section>
+
+      <section className="settings-group">
+        <h3>Tree</h3>
+        <div className="setting-row">
+          <span>Colour OLST and MOBJ tags</span>
+          <Toggle on={tagColors} label="Tag colours" onChange={onTagColors} />
+        </div>
+        <p className="hint">
+          OLST tags turn blue and MOBJ tags amber so block types separate at a glance.
+        </p>
+      </section>
+
+      <section className="settings-group">
+        <h3>Icons</h3>
+        <div className="segmented">
+          <button
+            className={`seg ${corners === "round" ? "active" : ""}`}
+            onClick={() => onCorners("round")}
+          >
+            Round
+          </button>
+          <button
+            className={`seg ${corners === "sharp" ? "active" : ""}`}
+            onClick={() => onCorners("sharp")}
+          >
+            Sharp
+          </button>
+        </div>
+        <p className="hint">
+          Sharp squares every button corner and draws icon strokes with mitred joins.
         </p>
       </section>
     </div>

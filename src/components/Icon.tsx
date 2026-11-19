@@ -3,11 +3,11 @@ export type IconName =
   | "undo"
   | "redo"
   | "revert"
-  | "upload"
-  | "download"
+  | "save"
   | "sun"
   | "moon"
   | "tree"
+  | "web"
   | "grid"
   | "list"
   | "cog"
@@ -39,18 +39,11 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M4.6 10a8 8 0 1 1 2.1 6.2" />
     </>
   ),
-  upload: (
+  save: (
     <>
-      <path d="M12 16V4" />
-      <path d="m7 9 5-5 5 5" />
-      <path d="M4 20h16" />
-    </>
-  ),
-  download: (
-    <>
-      <path d="M12 4v12" />
-      <path d="m7 11 5 5 5-5" />
-      <path d="M4 20h16" />
+      <path d="M5 3.5h9.5L20 9v11.5H5z" />
+      <path d="M8.5 3.5v5.5h6.5V3.5" />
+      <path d="M8.5 20v-6h7v6" />
     </>
   ),
   sun: (
@@ -65,6 +58,13 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M21 12h-8M21 6h-8M21 18h-8" />
       <path d="M3 6v4c0 1.1.9 2 2 2h3" />
       <path d="M3 10v6c0 1.1.9 2 2 2h3" />
+    </>
+  ),
+  web: (
+    <>
+      <path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4" />
+      <circle cx="12" cy="12" r="4.2" />
+      <circle cx="12" cy="12" r="8.2" />
     </>
   ),
   grid: (

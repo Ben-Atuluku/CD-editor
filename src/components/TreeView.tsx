@@ -17,6 +17,7 @@ interface Props {
   onSelect: (selection: Selection) => void;
   onEditString: (slot: StringSlot, text: string) => void;
   onAddMobj: (olstId: string, name: string) => void;
+  tagColors: boolean;
 }
 
 function InlineEditor({
@@ -104,7 +105,7 @@ function blockMeta(node: ContainerNode): string {
   return node.strings.length === 0 ? "empty" : "";
 }
 
-export function TreeView({ doc, selection, onSelect, onEditString, onAddMobj }: Props) {
+export function TreeView({ doc, selection, onSelect, onEditString, onAddMobj, tagColors }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addingId, setAddingId] = useState<string | null>(null);
@@ -325,7 +326,7 @@ export function TreeView({ doc, selection, onSelect, onEditString, onAddMobj }: 
   }
 
   return (
-    <div className="tree">
+    <div className={`tree ${tagColors ? "tag-colors" : ""}`}>
       {doc.stringPool && (
         <div className="tree-pool">
           <span className="badge pool">POOL</span>
