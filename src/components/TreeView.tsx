@@ -191,7 +191,7 @@ export function TreeView({ doc, selection, onSelect, onEditString, onAddMobj }: 
             }}
             disabled={!expandable}
           >
-            {!expandable ? "·" : open ? "▾" : "▸"}
+            {expandable && <span className="tree-chevron-glyph">{open ? "\u25be" : "\u25b8"}</span>}
           </button>
           <span className={`badge ${node.fourcc === "OLST" ? "olst" : "mobj"}`}>{node.fourcc}</span>
 

@@ -9,6 +9,9 @@ import {
 import type { Selection } from "../lib/selection";
 import { BODY_PARTS, describeMaterial } from "../lib/bodyParts";
 import { textureFields } from "../lib/texture";
+import type { CharacterField } from "../lib/character";
+import { parseTextureName, planReassign, type ReassignCandidate } from "../lib/reassign";
+import { CharacterParams } from "./CharacterParams";
 
 type TextureEdit = (node: ContainerNode, field: "material" | "slot", value: number) => void;
 
@@ -18,6 +21,8 @@ interface Props {
   onEditString: (slot: StringSlot, text: string) => void;
   onEditByte: (offset: number, value: number) => void;
   onEditTexture: TextureEdit;
+  onEditParam: (field: CharacterField, value: number[]) => void;
+  onReassign: (candidates: ReassignCandidate[]) => void;
   onSelect: (selection: Selection) => void;
 }
 
@@ -30,17 +35,35 @@ function TextureForm({
   node,
   doc,
   onEditTexture,
+  onReassign,
 }: {
   node: ContainerNode;
   doc: CdDocument;
   onEditTexture: TextureEdit;
+  onReassign: (candidates: ReassignCandidate[]) => void;
 }) {
   const fields = textureFields(node, doc.bytes);
   const [slotDraft, setSlotDraft] = useState(fields ? String(fields.slot) : "");
+  const currentToken = node.strings[0] ? parseTextureName(node.strings[0].text)?.token ?? "" : "";
+  const [token, setToken] = useState(currentToken);
 
   useEffect(() => {
     setSlotDraft(fields ? String(fields.slot) : "");
   }, [node.id, fields?.slot]);
+
+  useEffect(() => {
+    setToken(currentToken);
+  }, [node.id, currentToken]);
+
+  const parent = node.parentId
+    ? doc.containers.find((candidate) => candidate.id === node.parentId) ?? null
+    : null;
+  const groupSlots = (parent?.children ?? [])
+    .filter((child) => child.fourcc === "MOBJ")
+    .map((child) => child.strings[0])
+    .filter((slot): slot is StringSlot => Boolean(slot));
+  const candidates = planReassign(groupSlots, token);
+  const fitting = candidates.filter((candidate) => candidate.fits).length;
 
   if (!fields) return null;
 
@@ -113,6 +136,44 @@ function TextureForm({
           ))}
         </ul>
       </details>
+
+      {groupSlots.length > 1 && (
+        <details className="reassign">
+          <summary>
+            Reassign textures <span className="beta-tag">beta</span>
+          </summary>
+          <p className="hint">
+            Renames the character token across every texture in this group. Slots never grow, so a
+            longer name only applies to references with room for it.
+          </p>
+          <input
+            className="text-input"
+            value={token}
+            spellCheck={false}
+            placeholder="OURCHOICE"
+            onChange={(event) => setToken(event.target.value.toUpperCase())}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setToken(currentToken);
+            }}
+          />
+          <ul className="reassign-list">
+            {candidates.slice(0, 12).map((candidate) => (
+              <li key={candidate.slot.id} className={candidate.fits ? "" : "bad"}>
+                <span>{candidate.slot.text.split(/[\\/]/).pop()}</span>
+                <span className="reassign-arrow">→</span>
+                <span>{candidate.next.split(/[\\/]/).pop()}</span>
+                {!candidate.fits && <span className="reassign-over">too long</span>}
+              </li>
+            ))}
+            {candidates.length === 0 && (
+              <li className="reassign-empty">Nothing to rename with that token.</li>
+            )}
+          </ul>
+          <button className="btn" disabled={fitting === 0} onClick={() => onReassign(candidates)}>
+            Apply {fitting} rename{fitting === 1 ? "" : "s"}
+          </button>
+        </details>
+      )}
     </div>
   );
 }
@@ -122,11 +183,15 @@ function StringInspector({
   doc,
   onEditString,
   onEditTexture,
+  onEditParam,
+  onReassign,
 }: {
   slot: StringSlot;
   doc: CdDocument;
   onEditString: (slot: StringSlot, text: string) => void;
   onEditTexture: TextureEdit;
+  onEditParam: (field: CharacterField, value: number[]) => void;
+  onReassign: (candidates: ReassignCandidate[]) => void;
 }) {
   const [draft, setDraft] = useState(slot.text);
 
@@ -168,8 +233,22 @@ function StringInspector({
         )}
       </div>
 
+      {node && (
+        <CharacterParams
+          doc={doc}
+          node={node}
+          onEditParam={onEditParam}
+          onEditString={onEditString}
+        />
+      )}
+
       {texture && node && (
-        <TextureForm node={node} doc={doc} onEditTexture={onEditTexture} />
+        <TextureForm
+          node={node}
+          doc={doc}
+          onEditTexture={onEditTexture}
+          onReassign={onReassign}
+        />
       )}
 
       <label className="field-label" htmlFor="reference-value">
@@ -248,11 +327,17 @@ function ContainerInspector({
   doc,
   onSelect,
   onEditTexture,
+  onEditParam,
+  onEditString,
+  onReassign,
 }: {
   node: ContainerNode;
   doc: CdDocument;
   onSelect: (selection: Selection) => void;
   onEditTexture: TextureEdit;
+  onEditParam: (field: CharacterField, value: number[]) => void;
+  onEditString: (slot: StringSlot, text: string) => void;
+  onReassign: (candidates: ReassignCandidate[]) => void;
 }) {
   const path = containerPath(doc, node.id);
   const parent = node.parentId
@@ -271,8 +356,20 @@ function ContainerInspector({
         ))}
       </div>
 
+      <CharacterParams
+        doc={doc}
+        node={node}
+        onEditParam={onEditParam}
+        onEditString={onEditString}
+      />
+
       {node.fourcc === "MOBJ" && (
-        <TextureForm node={node} doc={doc} onEditTexture={onEditTexture} />
+        <TextureForm
+          node={node}
+          doc={doc}
+          onEditTexture={onEditTexture}
+          onReassign={onReassign}
+        />
       )}
 
       <dl className="kv">
@@ -462,6 +559,8 @@ export function Inspector({
   onEditString,
   onEditByte,
   onEditTexture,
+  onEditParam,
+  onReassign,
   onSelect,
 }: Props) {
   if (!selection) {
@@ -486,6 +585,8 @@ export function Inspector({
         doc={doc}
         onEditString={onEditString}
         onEditTexture={onEditTexture}
+        onEditParam={onEditParam}
+        onReassign={onReassign}
       />
     ) : (
       <div className="inspector-empty">That reference is no longer present.</div>
@@ -498,6 +599,9 @@ export function Inspector({
         doc={doc}
         onSelect={onSelect}
         onEditTexture={onEditTexture}
+        onEditParam={onEditParam}
+        onEditString={onEditString}
+        onReassign={onReassign}
       />
     ) : (
       <div className="inspector-empty">That container is no longer present.</div>

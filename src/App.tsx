@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   addMobj,
   encodeReplacement,
@@ -10,6 +18,15 @@ import {
 } from "./lib/cd";
 import { textureFields } from "./lib/texture";
 import { describeMaterial } from "./lib/bodyParts";
+import { encodeField, type CharacterField } from "./lib/character";
+import type { ReassignCandidate } from "./lib/reassign";
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const storedNumber = (key: string, fallback: number) => {
+  const stored = Number(localStorage.getItem(key));
+  return Number.isFinite(stored) && stored > 0 ? stored : fallback;
+};
 import { ACCENTS, SettingsPanel, type Theme } from "./components/SettingsPanel";
 import type { Selection } from "./lib/selection";
 import { Icon } from "./components/Icon";
@@ -58,6 +75,13 @@ export default function App() {
     () => localStorage.getItem("cd:accent-on") !== "no",
   );
   const [hexOpen, setHexOpen] = useState(true);
+  const [hexHeight, setHexHeight] = useState(() => clamp(storedNumber("cd:hex-h", 250), 120, 900));
+  const [inspectorWidth, setInspectorWidth] = useState(() =>
+    clamp(storedNumber("cd:inspector-w", 390), 300, 760),
+  );
+  const dragRef = useRef<{ kind: "inspector" | "hex"; x: number; y: number; value: number } | null>(
+    null,
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback((name: string, data: Uint8Array) => {
@@ -283,6 +307,90 @@ export default function App() {
     [bytes, doc, applyHunks],
   );
 
+  const editParam = useCallback(
+    (field: CharacterField, value: number[]) => {
+      if (!bytes) return;
+      const next = encodeField(field, value);
+      if (!next) return;
+      applyHunks(
+        [
+          {
+            offset: field.offset,
+            before: bytes.slice(field.offset, field.offset + next.length),
+            after: next,
+          },
+        ],
+        `${field.label} → ${value.join(", ")}`,
+      );
+      setNotice(`${field.label} written.`);
+    },
+    [bytes, applyHunks],
+  );
+
+  const reassignTextures = useCallback(
+    (candidates: ReassignCandidate[]) => {
+      if (!bytes) return;
+      const hunks: Hunk[] = [];
+      for (const candidate of candidates) {
+        if (!candidate.fits) continue;
+        const result = encodeReplacement(candidate.slot, candidate.next);
+        if (!result.ok) continue;
+        hunks.push({
+          offset: candidate.slot.offset,
+          before: bytes.slice(
+            candidate.slot.offset,
+            candidate.slot.offset + candidate.slot.byteLength,
+          ),
+          after: result.bytes,
+        });
+      }
+      if (hunks.length === 0) {
+        setNotice("No texture reference had room for that name.");
+        return;
+      }
+      applyHunks(hunks, `reassigned ${hunks.length} texture name${hunks.length === 1 ? "" : "s"}`);
+      setNotice(
+        `Renamed ${hunks.length} texture reference${hunks.length === 1 ? "" : "s"}. ${
+          candidates.length - hunks.length
+        } skipped — slot too small.`,
+      );
+    },
+    [bytes, applyHunks],
+  );
+
+  const startDrag = (kind: "inspector" | "hex") => (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      kind,
+      x: event.clientX,
+      y: event.clientY,
+      value: kind === "inspector" ? inspectorWidth : hexHeight,
+    };
+  };
+
+  const moveDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    if (drag.kind === "inspector") {
+      setInspectorWidth(clamp(drag.value - (event.clientX - drag.x), 300, 760));
+    } else {
+      setHexHeight(clamp(drag.value - (event.clientY - drag.y), 120, window.innerHeight - 240));
+    }
+  };
+
+  const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const nudge = (kind: "inspector" | "hex", delta: number) => {
+    if (kind === "inspector") setInspectorWidth((width) => clamp(width + delta, 300, 760));
+    else setHexHeight((height) => clamp(height + delta, 120, window.innerHeight - 240));
+  };
+
   const editByte = useCallback(
     (offset: number, value: number) => {
       if (!bytes) return;
@@ -350,6 +458,15 @@ export default function App() {
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("cd:inspector-w", String(inspectorWidth));
+      localStorage.setItem("cd:hex-h", String(hexHeight));
+    } catch {
+      // Private-mode storage failures are harmless.
+    }
+  }, [inspectorWidth, hexHeight]);
 
   useEffect(() => {
     if (!notice) return;
@@ -560,8 +677,16 @@ export default function App() {
           </div>
         </main>
       ) : (
-        <main className={`workspace ${hexOpen ? "" : "hex-collapsed"}`}>
-          <aside className="panel">
+        <main
+          className={`workspace ${hexOpen ? "" : "hex-collapsed"}`}
+          style={
+            {
+              "--inspector-w": `${inspectorWidth}px`,
+              "--hex-h": hexOpen ? `${hexHeight}px` : "auto",
+            } as CSSProperties
+          }
+        >
+          <aside className="panel left">
             <div className="panel-tools">
               <div className="tool-group">
                 <button
@@ -633,6 +758,24 @@ export default function App() {
           </aside>
 
           <section className={`panel center ${hexOpen ? "" : "collapsed"}`}>
+            {hexOpen && (
+              <div
+                className="gutter gutter-h"
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="Resize the hex panel"
+                title="Drag to resize the hex panel"
+                tabIndex={0}
+                onPointerDown={startDrag("hex")}
+                onPointerMove={moveDrag}
+                onPointerUp={endDrag}
+                onPointerCancel={endDrag}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowUp") nudge("hex", 16);
+                  if (event.key === "ArrowDown") nudge("hex", -16);
+                }}
+              />
+            )}
             <div className="panel-head">
               <button
                 className="panel-toggle"
@@ -661,12 +804,30 @@ export default function App() {
           </section>
 
           <aside className="panel right">
+            <div
+              className="gutter gutter-v"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the inspector"
+              title="Drag to resize the inspector"
+              tabIndex={0}
+              onPointerDown={startDrag("inspector")}
+              onPointerMove={moveDrag}
+              onPointerUp={endDrag}
+              onPointerCancel={endDrag}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft") nudge("inspector", 16);
+                if (event.key === "ArrowRight") nudge("inspector", -16);
+              }}
+            />
             <Inspector
               doc={doc}
               selection={selection}
               onEditString={editString}
               onEditByte={editByte}
               onEditTexture={editTextureField}
+              onEditParam={editParam}
+              onReassign={reassignTextures}
               onSelect={select}
             />
           </aside>
